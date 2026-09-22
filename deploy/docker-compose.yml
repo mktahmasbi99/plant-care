@@ -1,0 +1,12 @@
+services:
+  plant-care:
+    image: ghcr.io/mktahmasbi99/plant-care:latest
+    container_name: plant-care
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      TZ: ${TZ:-Europe/Warsaw}
+      PLANT_CARE_DB: /data/plant_care.sqlite3
+    volumes:
+      - ./data:/data

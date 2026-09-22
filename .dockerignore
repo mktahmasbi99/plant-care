@@ -1,0 +1,11 @@
+.git
+.venv
+node_modules
+frontend/node_modules
+frontend/dist
+data
+*.sqlite3
+__pycache__
+.pytest_cache
+playwright-report
+test-results

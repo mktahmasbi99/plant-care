@@ -1,0 +1,9 @@
+{
+  "name": "Plant Care",
+  "short_name": "Plant Care",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f4ee",
+  "theme_color": "#2f5b40",
+  "icons": []
+}
