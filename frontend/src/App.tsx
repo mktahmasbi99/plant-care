@@ -48,6 +48,14 @@ const relative = (days: number | null) =>
       : days === 1
         ? "Watered yesterday"
         : `Watered ${days} days ago`;
+function lastWateredLabel(plant: Plant) {
+  const days = plant.status.days_since;
+  if (!plant.last_watered || days === null) return "Never";
+  if (days < 0 || days > 35) return plant.last_watered;
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
 function dateAfter(day: string, days: number) {
   const result = new Date(`${day}T12:00:00`);
   result.setDate(result.getDate() + days);
@@ -131,7 +139,7 @@ function PlantCard({
       </button>
       <div className="water-summary">
         <span>Last watered</span>
-        <strong>{plant.last_watered || "Never"}</strong>
+        <strong>{lastWateredLabel(plant)}</strong>
         <small>{relative(plant.status.days_since)}</small>
       </div>
       <div className="card-footer">
@@ -210,7 +218,7 @@ function PlantForm({
   onCancel,
 }: {
   initial?: Plant;
-  onSave: (data: Record<string, unknown>) => Promise<void>;
+  onSave: (data: Record<string, unknown>, photo: File | null) => Promise<void>;
   onCancel: () => void;
 }) {
   const [species, setSpecies] = useState(initial?.species || "");
@@ -221,19 +229,23 @@ function PlantForm({
     initial?.recommendation.interval_days || 7,
   );
   const [lastWatered, setLastWatered] = useState("");
+  const [photo, setPhoto] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setSaving(true);
     try {
-      await onSave({
-        species,
-        nickname,
-        location,
-        care_note: careNote,
-        recommendation: { interval_days: intervalDays },
-        initial_last_watered: lastWatered || null,
-      });
+      await onSave(
+        {
+          species,
+          nickname,
+          location,
+          care_note: careNote,
+          recommendation: { interval_days: intervalDays },
+          initial_last_watered: lastWatered || null,
+        },
+        photo,
+      );
     } finally {
       setSaving(false);
     }
@@ -272,14 +284,26 @@ function PlantForm({
         </div>
       </fieldset>
       {!initial && (
-        <label>
-          Last watered <span className="optional">optional</span>
-          <input
-            type="date"
-            value={lastWatered}
-            onChange={(e) => setLastWatered(e.target.value)}
-          />
-        </label>
+        <>
+          <label>
+            Last watered <span className="optional">optional</span>
+            <input
+              type="date"
+              value={lastWatered}
+              onChange={(e) => setLastWatered(e.target.value)}
+            />
+          </label>
+          <label>
+            Photo <span className="optional">optional</span>
+            <input
+              aria-label="Plant photo"
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/heic"
+              capture="environment"
+              onChange={(event) => setPhoto(event.target.files?.[0] || null)}
+            />
+          </label>
+        </>
       )}
       <label>
         Care instructions <span className="optional">permanent note</span>
@@ -544,9 +568,16 @@ export function App() {
       setError(e instanceof Error ? e.message : "Could not save card order.");
     }
   };
-  const savePlant = async (data: Record<string, unknown>) => {
+  const savePlant = async (
+    data: Record<string, unknown>,
+    photo: File | null,
+  ) => {
     try {
-      await api.createPlant(data);
+      const plant = await api.createPlant(data);
+      if (photo) {
+        const uploaded = await api.uploadPhoto(plant.id, photo);
+        await api.setCover(uploaded.id);
+      }
       await reload();
       setPage("home");
     } catch (e) {
