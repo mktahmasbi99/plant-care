@@ -4,12 +4,13 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
 DB_ENV = "PLANT_CARE_DB"
 DEFAULT_DB = "./data/plant_care.sqlite3"
 APP_ID = "plant-care"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _write_lock = threading.RLock()
 
 
@@ -28,8 +29,54 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     return connection
 
 
-def initialize() -> None:
-    with connect() as db:
+def _columns(db: sqlite3.Connection, table: str) -> set[str]:
+    return {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate_v2(db: sqlite3.Connection) -> None:
+    """Move the Monday/Friday data model to per-pot scheduling without losing history."""
+    if "sort_position" not in _columns(db, "plants"):
+        db.execute("ALTER TABLE plants ADD COLUMN sort_position INTEGER NOT NULL DEFAULT 0")
+    if "next_check_date" not in _columns(db, "plant_checks"):
+        db.execute("ALTER TABLE plant_checks ADD COLUMN next_check_date TEXT")
+
+    # Give old plants a durable order matching the former list order.
+    plants = db.execute(
+        "SELECT id FROM plants ORDER BY lower(COALESCE(location,'')), lower(COALESCE(nickname,species)), id"
+    ).fetchall()
+    for position, plant in enumerate(plants):
+        db.execute("UPDATE plants SET sort_position=? WHERE id=?", (position, plant["id"]))
+
+    timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    migration_day = datetime.now().astimezone().date().isoformat()
+    db.execute(
+        "UPDATE inspection_rounds SET status='incomplete', closed_at=? WHERE status='open'",
+        (timestamp,),
+    )
+
+    # Preserve historical rows and create a new current, explicit day interval.
+    current = db.execute(
+        "SELECT * FROM watering_recommendations WHERE effective_to IS NULL"
+    ).fetchall()
+    for recommendation in current:
+        kind, value = recommendation["cadence_kind"], recommendation["cadence_value"]
+        interval = 1 if kind == "daily" else (7 + value - 1) // value if kind == "weekly" else 30 if kind == "monthly" else value
+        if kind == "days":
+            continue
+        db.execute(
+            "UPDATE watering_recommendations SET effective_to=? WHERE id=?",
+            (migration_day, recommendation["id"]),
+        )
+        db.execute(
+            """INSERT INTO watering_recommendations
+               (plant_id,cadence_kind,cadence_value,effective_from,source,created_at)
+               VALUES (?, 'days', ?, ?, ?, ?)""",
+            (recommendation["plant_id"], interval, migration_day, recommendation["source"], timestamp),
+        )
+
+
+def initialize(path: Path | None = None) -> None:
+    with connect(path) as db:
         db.executescript(
             """
             CREATE TABLE IF NOT EXISTS app_metadata (
@@ -42,6 +89,7 @@ def initialize() -> None:
                 location TEXT,
                 care_note TEXT NOT NULL DEFAULT '',
                 archived_at TEXT,
+                sort_position INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -88,6 +136,7 @@ def initialize() -> None:
                 care_date TEXT NOT NULL,
                 outcome TEXT NOT NULL CHECK(outcome IN ('watered','not_watered')),
                 watering_event_id INTEGER REFERENCES watering_events(id) ON DELETE SET NULL,
+                next_check_date TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(round_id, plant_id)
@@ -140,6 +189,12 @@ def initialize() -> None:
             );
             """
         )
+        version_row = db.execute(
+            "SELECT value FROM app_metadata WHERE key='schema_version'"
+        ).fetchone()
+        version = int(version_row["value"]) if version_row else 0
+        if version < 2:
+            _migrate_v2(db)
         db.execute(
             "INSERT OR REPLACE INTO app_metadata(key, value) VALUES (?, ?)",
             ("app_id", APP_ID),

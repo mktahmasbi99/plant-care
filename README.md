@@ -1,16 +1,16 @@
 # Plant Care
 
-A private, self-hosted plant-care routine for a single trusted household. It is designed for fast Monday/Friday checks, daily-care exceptions, and a clear last-watered history.
+A private, self-hosted plant-care routine for a single trusted household. It highlights each pot when its individually scheduled check is due while keeping the complete collection visible in your chosen order.
 
 ## What it records
 
 - Individual plants (species, nickname, location, permanent care routine)
-- Monday/Friday inspection rounds with **Watered** and **Not watered** actions
-- Watering recommendations: daily, times per week, monthly, or every N days
+- Per-pot check intervals based on the last watering or a selected recheck date
+- **Watered** and **Not watered** actions, with quick recheck choices
 - Dated journal notes, occasional photos, fertilizer products and applications
 - Full timeline and self-contained SQLite backup/restore
 
-The app does not judge pot weight or make automatic horticultural decisions. It records your care decisions and shows when a plant is beyond its configured interval.
+The app does not judge pot weight or make automatic horticultural decisions. It records your care decisions and shows when a pot is due for its configured check interval.
 
 ## Local development
 

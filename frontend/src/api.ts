@@ -1,17 +1,14 @@
-export type CadenceKind = 'daily' | 'weekly' | 'monthly' | 'days'
 export type Status = 'never_watered' | 'on_track' | 'due_soon' | 'due' | 'overdue'
 
-export type Recommendation = { id: number; kind: CadenceKind; value: number; label: string; effective_from: string }
+export type Recommendation = { id: number; interval_days: number; label: string; effective_from: string }
 export type Plant = {
   id: number; species: string; nickname: string; display_name: string; location: string; care_note: string
   archived_at: string | null; created_at: string; recommendation: Recommendation; last_watered: string | null
   last_check: { id: number; date: string; outcome: 'watered' | 'not_watered' } | null
-  status: { status: Status; target_date: string | null; days_since: number | null }
-  cover_photo_id: number | null; round_check?: { id: number; outcome: 'watered' | 'not_watered' } | null
-  in_round?: boolean; checked_today_not_watered?: boolean
+  status: { status: Status; next_check_date: string | null; days_since: number | null; days_until_check: number | null }
+  cover_photo_id: number | null; sort_position: number
 }
-export type Round = { id: number; scheduled_date: string; status: string; completed: number; total: number; plants: Plant[] }
-export type Dashboard = { server_date: string; round: Round; daily: Plant[]; attention: Plant[]; plants: Plant[] }
+export type Dashboard = { server_date: string; due_count: number; plants: Plant[] }
 export type TimelineEvent = Record<string, unknown> & { id: number; type: string; care_date?: string; created_at: string }
 export type PlantDetail = Plant & { timeline: TimelineEvent[]; recommendation_history: Record<string, unknown>[] }
 export type Fertilizer = { id: number; name: string; description: string; archived_at: string | null }
@@ -36,8 +33,8 @@ export const api = {
   archive: (id: number) => request(`/api/plants/${id}/archive`, { method: 'POST' }),
   restorePlant: (id: number) => request(`/api/plants/${id}/restore`, { method: 'POST' }),
   deletePlant: (id: number) => request(`/api/plants/${id}?confirmation=DELETE`, { method: 'DELETE' }),
-  roundCheck: (round: number, plant: number, data: unknown) => request(`/api/rounds/${round}/plants/${plant}/check`, { method: 'POST', body: JSON.stringify(data) }),
   adHocCheck: (plant: number, data: unknown) => request(`/api/plants/${plant}/checks`, { method: 'POST', body: JSON.stringify(data) }),
+  reorderPlants: (plantIds: number[]) => request<{ plant_ids: number[] }>('/api/plants/order', { method: 'PUT', body: JSON.stringify({ plant_ids: plantIds }) }),
   deleteCheck: (check: number) => request(`/api/checks/${check}`, { method: 'DELETE' }),
   watering: (plant: number, data: unknown) => request(`/api/plants/${plant}/waterings`, { method: 'POST', body: JSON.stringify(data) }),
   journal: (plant: number, data: unknown) => request(`/api/plants/${plant}/journal`, { method: 'POST', body: JSON.stringify(data) }),
