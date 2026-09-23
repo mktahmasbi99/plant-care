@@ -192,7 +192,22 @@ h3 {
   gap: 0.14rem;
 }
 .card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
   font-weight: 800;
+  min-width: 0;
+}
+.card-position {
+  flex: 0 0 2ch;
+  color: #718276;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.card-title-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -844,6 +859,9 @@ nav button.active {
   .settings p,
   .timeline-event p {
     color: #aebcaf;
+  }
+  .card-position {
+    color: #91aa98;
   }
   input,
   textarea,

@@ -98,10 +98,12 @@ function Avatar({ plant, large = false }: { plant: Plant; large?: boolean }) {
 
 function PlantCard({
   plant,
+  position,
   onAction,
   onOpen,
 }: {
   plant: Plant;
+  position: number;
   onAction: (plant: Plant, outcome: "watered" | "not_watered") => void;
   onOpen: () => void;
 }) {
@@ -130,7 +132,12 @@ function PlantCard({
       >
         <Avatar plant={plant} />
         <span className="card-copy">
-          <span className="card-title">{plant.display_name}</span>
+          <span className="card-title">
+            <span className="card-position" aria-label={`Position ${position}`}>
+              {String(position).padStart(2, "0")}
+            </span>
+            <span className="card-title-name">{plant.display_name}</span>
+          </span>
           <span className="species">
             {plant.species}
             {plant.location ? ` · ${plant.location}` : ""}
@@ -199,10 +206,11 @@ function PlantList({
         strategy={verticalListSortingStrategy}
       >
         <section className="card-list">
-          {plants.map((plant) => (
+          {plants.map((plant, index) => (
             <PlantCard
               key={plant.id}
               plant={plant}
+              position={index + 1}
               onAction={onAction}
               onOpen={() => onOpen(plant.id)}
             />
