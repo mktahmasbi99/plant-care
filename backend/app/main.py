@@ -446,7 +446,7 @@ def delete_plant(plant_id: int, confirmation: str = Query(default="")):
             422, "Pass confirmation=DELETE to permanently remove this plant."
         )
     with transaction() as db:
-        plant = require_row(
+        require_row(
             db.execute("SELECT * FROM plants WHERE id=?", (plant_id,)).fetchone(),
             "Plant not found.",
         )
@@ -593,7 +593,7 @@ def delete_watering(watering_id: int):
             "Watering not found.",
         )
         if water["source_check_id"]:
-            raise HTTPException(409, "Edit or delete the linked check instead.")
+            db.execute("DELETE FROM plant_checks WHERE id=?", (water["source_check_id"],))
         db.execute("DELETE FROM watering_events WHERE id=?", (watering_id,))
         return Response(status_code=204)
 

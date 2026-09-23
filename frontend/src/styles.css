@@ -415,7 +415,7 @@ legend {
 }
 .quick-tools {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 0.45rem;
 }
 .quick-tools button {
@@ -454,6 +454,44 @@ legend {
   width: 7rem;
   border-radius: 0.55rem;
   margin-top: 0.45rem;
+}
+.timeline-actions,
+.watering-edit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: end;
+  margin-top: 0.6rem;
+}
+.timeline-actions {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.timeline-actions .secondary,
+.timeline-actions .delete-menu-item {
+  width: auto;
+  padding: 0.45rem 0.65rem;
+  white-space: nowrap;
+}
+.watering-edit label {
+  display: grid;
+  gap: 0.3rem;
+  font-weight: 700;
+  font-size: 0.82rem;
+}
+.watering-edit input {
+  min-width: 10rem;
+}
+.timeline-cancel {
+  border: 0;
+  background: transparent;
+  color: #426048;
+  font-weight: 700;
+  padding: 0.6rem 0.3rem;
+}
+.history-error {
+  color: #a3291a;
+  margin: -0.5rem 0 0;
 }
 .event-date {
   color: #6b756d;
@@ -682,9 +720,14 @@ nav button.active {
 .schedule-heading h2 {
   color: #173b26;
 }
+.detail-controls {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-left: auto;
+}
 .detail-menu {
   position: relative;
-  margin-left: auto;
   align-self: flex-start;
 }
 .kebab-menu {
@@ -699,6 +742,7 @@ nav button.active {
   background: #fff;
   box-shadow: 0 8px 22px #18221a2b;
 }
+.menu-item,
 .delete-menu-item,
 .danger {
   border: 0;
@@ -706,12 +750,19 @@ nav button.active {
   padding: 0.65rem 0.8rem;
   font-weight: 750;
 }
+.menu-item,
 .delete-menu-item {
   width: 100%;
-  color: #a3291a;
   background: transparent;
   text-align: left;
 }
+.menu-item {
+  color: #254f34;
+}
+.delete-menu-item {
+  color: #a3291a;
+}
+.menu-item:hover,
 .delete-menu-item:hover {
   background: #fff0ed;
 }
@@ -808,6 +859,9 @@ nav button.active {
   .kebab-menu {
     background: #243528;
     border-color: #435647;
+  }
+  .menu-item {
+    color: #d4e7d5;
   }
   .delete-menu-item:hover {
     background: #3a2622;

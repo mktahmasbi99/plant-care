@@ -25,6 +25,7 @@ import {
   GripVertical,
   Leaf,
   MoreVertical,
+  Pencil,
   Plus,
   Sprout,
   Upload,
@@ -821,6 +822,11 @@ function PlantDetailView({
   const [product, setProduct] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [editingWatering, setEditingWatering] = useState<{
+    id: number;
+    careDate: string;
+  } | null>(null);
+  const [historyError, setHistoryError] = useState("");
   if (mode === "edit")
     return (
       <section className="page panel">
@@ -855,29 +861,38 @@ function PlantDetailView({
             {scheduleText(detail)} · {detail.recommendation.label}
           </small>
         </div>
-        <div className="detail-menu">
+        <div className="detail-controls">
           <button
             className="icon-button"
-            aria-label="Plant options"
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((open) => !open)}
+            aria-label="Edit plant"
+            onClick={() => setMode("edit")}
           >
-            <MoreVertical size={19} />
+            <Pencil size={19} />
           </button>
-          {menuOpen && (
-            <div className="kebab-menu" role="menu">
-              <button
-                role="menuitem"
-                className="delete-menu-item"
-                onClick={() => {
-                  setMenuOpen(false);
-                  setShowDelete(true);
-                }}
-              >
-                Delete plant
-              </button>
-            </div>
-          )}
+          <div className="detail-menu">
+            <button
+              className="icon-button"
+              aria-label="Plant options"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              <MoreVertical size={19} />
+            </button>
+            {menuOpen && (
+              <div className="kebab-menu" role="menu">
+                <button
+                  role="menuitem"
+                  className="delete-menu-item"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setShowDelete(true);
+                  }}
+                >
+                  Delete plant
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
       <div className="detail-actions">
@@ -903,10 +918,6 @@ function PlantDetailView({
         <button onClick={() => setMode("fertilizer")}>
           <Flower2 />
           Fertilizer
-        </button>
-        <button onClick={() => setMode("edit")}>
-          <Leaf />
-          Edit
         </button>
       </div>
       {detail.care_note && (
@@ -1014,6 +1025,7 @@ function PlantDetailView({
         </form>
       )}
       <h3 className="section-title">History</h3>
+      {historyError && <p className="history-error">{historyError}</p>}
       <section className="timeline">
         {detail.timeline.length ? (
           detail.timeline.map((event) => (
@@ -1045,6 +1057,86 @@ function PlantDetailView({
                     alt="Plant history"
                   />
                 )}
+                {event.type === "watering" &&
+                  (editingWatering?.id === event.id ? (
+                    <form
+                      className="watering-edit"
+                      onSubmit={async (formEvent) => {
+                        formEvent.preventDefault();
+                        try {
+                          await api.updateWatering(event.id, {
+                            care_date: editingWatering.careDate,
+                          });
+                          setEditingWatering(null);
+                          setHistoryError("");
+                          onRefresh();
+                        } catch (error) {
+                          setHistoryError(
+                            error instanceof Error
+                              ? error.message
+                              : "Could not update this watering.",
+                          );
+                        }
+                      }}
+                    >
+                      <label>
+                        Watering date
+                        <input
+                          aria-label="Watering date"
+                          type="date"
+                          value={editingWatering.careDate}
+                          onChange={(inputEvent) =>
+                            setEditingWatering({
+                              ...editingWatering,
+                              careDate: inputEvent.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                      <button className="secondary">Save date</button>
+                      <button
+                        type="button"
+                        className="timeline-cancel"
+                        onClick={() => setEditingWatering(null)}
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                  ) : (
+                    <div className="timeline-actions">
+                      <button
+                        className="secondary"
+                        onClick={() => {
+                          setEditingWatering({
+                            id: event.id,
+                            careDate: String(event.care_date),
+                          });
+                          setHistoryError("");
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="delete-menu-item"
+                        onClick={async () => {
+                          if (!confirm("Delete this watering record?")) return;
+                          try {
+                            await api.deleteWatering(event.id);
+                            setHistoryError("");
+                            onRefresh();
+                          } catch (error) {
+                            setHistoryError(
+                              error instanceof Error
+                                ? error.message
+                                : "Could not delete this watering.",
+                            );
+                          }
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))}
               </div>
             </div>
           ))

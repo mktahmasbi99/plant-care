@@ -52,6 +52,24 @@ def test_recheck_must_be_after_care_date(tmp_path, monkeypatch):
     assert response.status_code == 422
 
 
+def test_watering_history_date_can_change_or_be_deleted_with_its_linked_check(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    plant = make_plant(client)
+    check = client.post(
+        f"/api/plants/{plant['id']}/checks",
+        json={"outcome": "watered", "care_date": "2026-09-20"},
+    )
+    assert check.status_code == 200
+    detail = client.get(f"/api/plants/{plant['id']}").json()
+    watering = next(event for event in detail["timeline"] if event["type"] == "watering")
+    assert client.put(f"/api/waterings/{watering['id']}", json={"care_date": "2026-09-22"}).status_code == 200
+    updated = client.get(f"/api/plants/{plant['id']}").json()
+    assert updated["last_watered"] == "2026-09-22"
+    assert client.delete(f"/api/waterings/{watering['id']}").status_code == 204
+    after_delete = client.get(f"/api/plants/{plant['id']}").json()
+    assert not [event for event in after_delete["timeline"] if event["type"] in {"watering", "check"}]
+
+
 def test_order_is_persisted_and_requires_every_active_plant(tmp_path, monkeypatch):
     client = client_for(tmp_path, monkeypatch)
     first = make_plant(client, nickname="First")
