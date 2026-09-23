@@ -60,7 +60,15 @@ def _migrate_v2(db: sqlite3.Connection) -> None:
     ).fetchall()
     for recommendation in current:
         kind, value = recommendation["cadence_kind"], recommendation["cadence_value"]
-        interval = 1 if kind == "daily" else (7 + value - 1) // value if kind == "weekly" else 30 if kind == "monthly" else value
+        interval = (
+            1
+            if kind == "daily"
+            else (7 + value - 1) // value
+            if kind == "weekly"
+            else 30
+            if kind == "monthly"
+            else value
+        )
         if kind == "days":
             continue
         db.execute(
@@ -71,7 +79,13 @@ def _migrate_v2(db: sqlite3.Connection) -> None:
             """INSERT INTO watering_recommendations
                (plant_id,cadence_kind,cadence_value,effective_from,source,created_at)
                VALUES (?, 'days', ?, ?, ?, ?)""",
-            (recommendation["plant_id"], interval, migration_day, recommendation["source"], timestamp),
+            (
+                recommendation["plant_id"],
+                interval,
+                migration_day,
+                recommendation["source"],
+                timestamp,
+            ),
         )
 
 

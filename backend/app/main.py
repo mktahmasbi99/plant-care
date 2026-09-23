@@ -190,13 +190,30 @@ def next_check(db: sqlite3.Connection, plant_id: int, recommendation: sqlite3.Ro
 
 
 def care_status(
-    db: sqlite3.Connection, plant_id: int, last_watered: str | None, recommendation: sqlite3.Row, current: date
+    db: sqlite3.Connection,
+    plant_id: int,
+    last_watered: str | None,
+    recommendation: sqlite3.Row,
+    current: date,
 ) -> dict:
     scheduled = next_check(db, plant_id, recommendation)
     if not scheduled:
-        return {"status": "never_watered", "next_check_date": None, "days_until_check": None, "days_since": None}
+        return {
+            "status": "never_watered",
+            "next_check_date": None,
+            "days_until_check": None,
+            "days_since": None,
+        }
     days_until = (scheduled - current).days
-    status = "overdue" if days_until < 0 else "due" if days_until == 0 else "due_soon" if days_until == 1 else "on_track"
+    status = (
+        "overdue"
+        if days_until < 0
+        else "due"
+        if days_until == 0
+        else "due_soon"
+        if days_until == 1
+        else "on_track"
+    )
     return {
         "status": status,
         "next_check_date": scheduled.isoformat(),
@@ -223,14 +240,21 @@ def plant_payload(db: sqlite3.Connection, plant: sqlite3.Row, current: date | No
         "archived_at": plant["archived_at"],
         "created_at": plant["created_at"],
         "sort_position": plant["sort_position"],
-        "recommendation": {"id": recommendation["id"], "interval_days": recommendation["cadence_value"], "label": cadence_label(recommendation), "effective_from": recommendation["effective_from"]},
+        "recommendation": {
+            "id": recommendation["id"],
+            "interval_days": recommendation["cadence_value"],
+            "label": cadence_label(recommendation),
+            "effective_from": recommendation["effective_from"],
+        },
         "last_watered": watering["care_date"] if watering else None,
         "last_check": (
             {"date": check["care_date"], "outcome": check["outcome"], "id": check["id"]}
             if check
             else None
         ),
-        "status": care_status(db, plant["id"], watering["care_date"] if watering else None, recommendation, current),
+        "status": care_status(
+            db, plant["id"], watering["care_date"] if watering else None, recommendation, current
+        ),
         "cover_photo_id": cover["id"] if cover else None,
     }
 
@@ -240,7 +264,9 @@ def dashboard_payload(db: sqlite3.Connection, current: date) -> dict:
         "SELECT * FROM plants WHERE archived_at IS NULL ORDER BY sort_position, id"
     ).fetchall()
     cards = [plant_payload(db, plant, current) for plant in plants]
-    due_count = sum(card["status"]["status"] in ("never_watered", "due", "overdue") for card in cards)
+    due_count = sum(
+        card["status"]["status"] in ("never_watered", "due", "overdue") for card in cards
+    )
     return {"server_date": current.isoformat(), "due_count": due_count, "plants": cards}
 
 
@@ -281,9 +307,7 @@ def dashboard(day: str | None = Query(default=None)):
 def list_plants(include_archived: bool = False):
     with connect() as db:
         where = "" if include_archived else "WHERE archived_at IS NULL"
-        rows = db.execute(
-            f"SELECT * FROM plants {where} ORDER BY sort_position, id"
-        ).fetchall()
+        rows = db.execute(f"SELECT * FROM plants {where} ORDER BY sort_position, id").fetchall()
         return [plant_payload(db, row) for row in rows]
 
 
@@ -292,7 +316,9 @@ def create_plant(payload: PlantInput):
     initial = parse_date(payload.initial_last_watered) if payload.initial_last_watered else None
     timestamp = now()
     with transaction() as db:
-        position = db.execute("SELECT COALESCE(MAX(sort_position), -1) + 1 FROM plants").fetchone()[0]
+        position = db.execute("SELECT COALESCE(MAX(sort_position), -1) + 1 FROM plants").fetchone()[
+            0
+        ]
         cursor = db.execute(
             """INSERT INTO plants(species,nickname,location,care_note,sort_position,created_at,updated_at)
                VALUES (?,?,?,?,?,?,?)""",
@@ -336,10 +362,20 @@ class PlantOrderInput(BaseModel):
 @app.put("/api/plants/order")
 def reorder_plants(payload: PlantOrderInput):
     with transaction() as db:
-        active_ids = [row["id"] for row in db.execute("SELECT id FROM plants WHERE archived_at IS NULL").fetchall()]
-        if len(payload.plant_ids) != len(active_ids) or len(set(payload.plant_ids)) != len(payload.plant_ids) or set(payload.plant_ids) != set(active_ids):
+        active_ids = [
+            row["id"]
+            for row in db.execute("SELECT id FROM plants WHERE archived_at IS NULL").fetchall()
+        ]
+        if (
+            len(payload.plant_ids) != len(active_ids)
+            or len(set(payload.plant_ids)) != len(payload.plant_ids)
+            or set(payload.plant_ids) != set(active_ids)
+        ):
             raise HTTPException(409, "Plant order is stale. Refresh and try again.")
-        db.executemany("UPDATE plants SET sort_position=?,updated_at=? WHERE id=?", [(position, now(), plant_id) for position, plant_id in enumerate(payload.plant_ids)])
+        db.executemany(
+            "UPDATE plants SET sort_position=?,updated_at=? WHERE id=?",
+            [(position, now(), plant_id) for position, plant_id in enumerate(payload.plant_ids)],
+        )
         return {"plant_ids": payload.plant_ids}
 
 
@@ -442,9 +478,7 @@ def restore_plant(plant_id: int):
 @app.delete("/api/plants/{plant_id}")
 def delete_plant(plant_id: int, confirmation: str = Query(default="")):
     if confirmation != "DELETE":
-        raise HTTPException(
-            422, "Pass confirmation=DELETE to permanently remove this plant."
-        )
+        raise HTTPException(422, "Pass confirmation=DELETE to permanently remove this plant.")
     with transaction() as db:
         require_row(
             db.execute("SELECT * FROM plants WHERE id=?", (plant_id,)).fetchone(),
@@ -468,7 +502,14 @@ def record_ad_hoc_check(plant_id: int, payload: CheckInput):
         )
         cursor = db.execute(
             "INSERT INTO plant_checks(plant_id,care_date,outcome,next_check_date,created_at,updated_at) VALUES (?,?,?,?,?,?)",
-            (plant_id, care_day.isoformat(), payload.outcome, next_check_day.isoformat() if next_check_day else None, timestamp, timestamp),
+            (
+                plant_id,
+                care_day.isoformat(),
+                payload.outcome,
+                next_check_day.isoformat() if next_check_day else None,
+                timestamp,
+                timestamp,
+            ),
         )
         check_id = cursor.lastrowid
         if payload.outcome == "watered":
@@ -520,7 +561,14 @@ def update_check(check_id: int, payload: CheckInput):
                 )
         db.execute(
             "UPDATE plant_checks SET outcome=?,care_date=?,watering_event_id=?,next_check_date=?,updated_at=? WHERE id=?",
-            (payload.outcome, care_day.isoformat(), watering_id, next_check_day.isoformat() if next_check_day else None, now(), check_id),
+            (
+                payload.outcome,
+                care_day.isoformat(),
+                watering_id,
+                next_check_day.isoformat() if next_check_day else None,
+                now(),
+                check_id,
+            ),
         )
         return dict(
             require_row(db.execute("SELECT * FROM plant_checks WHERE id=?", (check_id,)).fetchone())
