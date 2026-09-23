@@ -313,7 +313,7 @@ function RecheckSheet({
   onClose: () => void;
 }) {
   const tomorrow = dateAfter(serverDate, 1);
-  const [custom, setCustom] = useState(tomorrow);
+  const [days, setDays] = useState("7");
   return (
     <div className="sheet-backdrop" role="presentation" onMouseDown={onClose}>
       <section
@@ -324,7 +324,7 @@ function RecheckSheet({
         onMouseDown={(event) => event.stopPropagation()}
       >
         <h2 id="recheck-title">Check {plant.display_name} again</h2>
-        <p>It was not watered. Choose the next check date.</p>
+        <p>It was not watered. Choose when to check it again.</p>
         <div className="recheck-options">
           <button
             className="secondary"
@@ -349,21 +349,24 @@ function RecheckSheet({
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            onChoose(custom);
+            onChoose(dateAfter(serverDate, Number(days)));
           }}
         >
           <label>
-            Pick a date
+            Check again in
             <input
-              aria-label="Custom recheck date"
+              aria-label="Days until next check"
               required
-              min={tomorrow}
-              type="date"
-              value={custom}
-              onChange={(event) => setCustom(event.target.value)}
+              min="1"
+              max="365"
+              type="number"
+              inputMode="numeric"
+              value={days}
+              onChange={(event) => setDays(event.target.value)}
             />
+            days
           </label>
-          <button className="secondary">Use this date</button>
+          <button className="secondary">Use this interval</button>
         </form>
         <button className="sheet-cancel" onClick={onClose}>
           Cancel

@@ -749,6 +749,11 @@ nav button.active {
     border-color: #304537;
     color: #e6efe6;
   }
+  .plant-card.on_track,
+  .plant-card.due_soon {
+    background: #1d2a20;
+    border-color: #304537;
+  }
   .card-main:hover {
     background: #25352a;
   }
