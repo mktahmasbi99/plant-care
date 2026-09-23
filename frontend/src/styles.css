@@ -829,6 +829,9 @@ nav button.active {
   .care-note {
     background: #243528;
   }
+  .care-note p {
+    color: #c6d9c8;
+  }
   .status-pill {
     background: #294632;
   }
