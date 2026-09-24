@@ -218,7 +218,9 @@ def test_delete_is_irreversible_and_requires_typed_confirmation(tmp_path, monkey
     assert client.delete(f"/api/plants/{plant['id']}").status_code == 422
     assert client.delete(f"/api/plants/{plant['id']}?confirmation=DELETE").status_code == 204
     assert client.get(f"/api/plants/{plant['id']}").status_code == 404
-    safety = [item for item in client.get("/api/backups").json() if item["category"] == "pre-delete"]
+    safety = [
+        item for item in client.get("/api/backups").json() if item["category"] == "pre-delete"
+    ]
     assert len(safety) == 1
 
 
@@ -284,7 +286,9 @@ def test_managed_backup_has_marker_restores_and_preserves_schedule(tmp_path, mon
     settings.update({"dailyTime": "02:30", "dailyRetention": 3})
     assert client.put("/api/backups/settings", json=settings).status_code == 200
     make_plant(client, nickname="After")
-    response = client.post("/api/backups/restore", json={"filename": filename, "confirmation": "RESTORE"})
+    response = client.post(
+        "/api/backups/restore", json={"filename": filename, "confirmation": "RESTORE"}
+    )
     assert response.status_code == 200
     assert response.json()["backup"].startswith("pre-restore-")
     assert client.get(f"/api/plants/{before['id']}").status_code == 200
@@ -302,18 +306,28 @@ def test_unmarked_upload_is_rejected_without_replacing_live_data(tmp_path, monke
     response = client.post(
         "/api/backups/restore-upload",
         data={"confirmation": "RESTORE"},
-        files={"file": ("unmarked.sqlite3", (tmp_path / "unmarked.sqlite3").read_bytes(), "application/x-sqlite3")},
+        files={
+            "file": (
+                "unmarked.sqlite3",
+                (tmp_path / "unmarked.sqlite3").read_bytes(),
+                "application/x-sqlite3",
+            )
+        },
     )
     assert response.status_code == 422
     assert client.get(f"/api/plants/{plant['id']}").status_code == 200
 
 
-def test_backup_schedule_catches_up_once_and_retains_only_the_configured_count(tmp_path, monkeypatch):
+def test_backup_schedule_catches_up_once_and_retains_only_the_configured_count(
+    tmp_path, monkeypatch
+):
     client_for(tmp_path, monkeypatch)
     settings = backup_settings()
     settings.update({"weeklyEnabled": False, "dailyRetention": 1})
     with sqlite3.connect(tmp_path / "plant-care.sqlite3") as db:
-        db.execute("UPDATE backup_settings SET daily_enabled=1, weekly_enabled=0, daily_retention=1")
+        db.execute(
+            "UPDATE backup_settings SET daily_enabled=1, weekly_enabled=0, daily_retention=1"
+        )
     first = datetime(2026, 9, 1, 2, 0, tzinfo=main_module.TZ)
     run_scheduled_backups(first)
     run_scheduled_backups(first + timedelta(days=1))

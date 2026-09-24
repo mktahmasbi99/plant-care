@@ -50,6 +50,7 @@ MAX_STORED_BYTES = 5 * 1024 * 1024
 MAX_EDGE = 2560
 THUMB_EDGE = 480
 
+
 async def backup_scheduler() -> None:
     while True:
         try:
@@ -470,7 +471,9 @@ def delete_plant(plant_id: int, confirmation: str = Query(default="")):
         try:
             create_backup("pre-delete")
         except (BackupError, OSError, sqlite3.Error) as error:
-            raise HTTPException(500, "Could not create a safety backup; plant was not deleted.") from error
+            raise HTTPException(
+                500, "Could not create a safety backup; plant was not deleted."
+            ) from error
         with transaction() as db:
             db.execute("DELETE FROM plants WHERE id=?", (plant_id,))
     return Response(status_code=204)
@@ -1044,7 +1047,9 @@ async def restore_backup(file: UploadFile = File(...), confirmation: str = Form(
 
 
 @app.post("/api/backups/import")
-async def import_legacy_database(file: UploadFile = File(...), confirmation: str = Form(default="")):
+async def import_legacy_database(
+    file: UploadFile = File(...), confirmation: str = Form(default="")
+):
     raw = await file.read(100 * 1024 * 1024 + 1)
     try:
         safety = import_database(raw, confirmation)

@@ -6,6 +6,8 @@ export default defineConfig({
   webServer: {
     command: '../.venv/bin/python -m uvicorn app.main:app --app-dir ../backend --host 127.0.0.1 --port 8000',
     env: { TZ: 'Europe/Warsaw', PLANT_CARE_DB: '/tmp/plant-care-e2e.sqlite3' },
+    url: 'http://127.0.0.1:8000/api/health',
+    timeout: 120_000,
     reuseExistingServer: !process.env.CI,
   },
   projects: [{ name: 'phone', use: { ...devices['iPhone 15'], browserName: 'chromium' } }],

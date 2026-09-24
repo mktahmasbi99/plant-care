@@ -45,7 +45,11 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     connection = sqlite3.connect(db_path, timeout=15, check_same_thread=False)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys=ON")
-    connection.execute("PRAGMA journal_mode=WAL" if path is None or path == database_path() else "PRAGMA journal_mode=DELETE")
+    connection.execute(
+        "PRAGMA journal_mode=WAL"
+        if path is None or path == database_path()
+        else "PRAGMA journal_mode=DELETE"
+    )
     connection.execute("PRAGMA busy_timeout=15000")
     return connection
 
@@ -319,7 +323,9 @@ def _backup_filename(category: str) -> Path:
     candidate = backup_directory() / f"{BACKUP_PREFIXES[category]}-plant-care-{stamp}.sqlite3"
     counter = 2
     while candidate.exists():
-        candidate = backup_directory() / f"{BACKUP_PREFIXES[category]}-plant-care-{stamp}-{counter}.sqlite3"
+        candidate = (
+            backup_directory() / f"{BACKUP_PREFIXES[category]}-plant-care-{stamp}-{counter}.sqlite3"
+        )
         counter += 1
     return candidate
 
@@ -327,7 +333,14 @@ def _backup_filename(category: str) -> Path:
 def _category_for_path(path: Path) -> str | None:
     if path.suffix != ".sqlite3":
         return None
-    return next((category for category, prefix in BACKUP_PREFIXES.items() if path.name.startswith(f"{prefix}-")), None)
+    return next(
+        (
+            category
+            for category, prefix in BACKUP_PREFIXES.items()
+            if path.name.startswith(f"{prefix}-")
+        ),
+        None,
+    )
 
 
 def _validate_sqlite(path: Path) -> None:
@@ -361,10 +374,14 @@ def backup_settings() -> dict:
     with connect() as db:
         row = db.execute("SELECT * FROM backup_settings WHERE id=1").fetchone()
     return {
-        "dailyEnabled": bool(row["daily_enabled"]), "dailyTime": row["daily_time"],
-        "dailyRetention": row["daily_retention"], "weeklyEnabled": bool(row["weekly_enabled"]),
-        "weeklyDay": row["weekly_day"], "weeklyTime": row["weekly_time"],
-        "weeklyRetention": row["weekly_retention"], "safetyRetention": row["safety_retention"],
+        "dailyEnabled": bool(row["daily_enabled"]),
+        "dailyTime": row["daily_time"],
+        "dailyRetention": row["daily_retention"],
+        "weeklyEnabled": bool(row["weekly_enabled"]),
+        "weeklyDay": row["weekly_day"],
+        "weeklyTime": row["weekly_time"],
+        "weeklyRetention": row["weekly_retention"],
+        "safetyRetention": row["safety_retention"],
     }
 
 
@@ -372,8 +389,13 @@ def _prune_backups(category: str, keep: int) -> None:
     if not backup_directory().exists():
         return
     paths = sorted(
-        (path for path in backup_directory().iterdir() if path.is_file() and _category_for_path(path) == category),
-        key=lambda path: path.stat().st_mtime, reverse=True,
+        (
+            path
+            for path in backup_directory().iterdir()
+            if path.is_file() and _category_for_path(path) == category
+        ),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
     )
     for path in paths[keep:]:
         path.unlink(missing_ok=True)
@@ -383,8 +405,13 @@ def _prune_safety_backups(keep: int) -> None:
     if not backup_directory().exists():
         return
     paths = sorted(
-        (path for path in backup_directory().iterdir() if path.is_file() and _category_for_path(path) in SAFETY_BACKUP_TYPES),
-        key=lambda path: path.stat().st_mtime, reverse=True,
+        (
+            path
+            for path in backup_directory().iterdir()
+            if path.is_file() and _category_for_path(path) in SAFETY_BACKUP_TYPES
+        ),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
     )
     for path in paths[keep:]:
         path.unlink(missing_ok=True)
@@ -404,13 +431,21 @@ def update_backup_settings(values: dict) -> dict:
         if not 1 <= values[key] <= 365:
             raise BackupError("Backup retention must be between 1 and 365.")
     with transaction() as db:
-        db.execute("""UPDATE backup_settings SET daily_enabled=?, daily_time=?, daily_retention=?,
+        db.execute(
+            """UPDATE backup_settings SET daily_enabled=?, daily_time=?, daily_retention=?,
             weekly_enabled=?, weekly_day=?, weekly_time=?, weekly_retention=?, safety_retention=?,
-            updated_at=CURRENT_TIMESTAMP WHERE id=1""", (
-            int(values["dailyEnabled"]), values["dailyTime"], values["dailyRetention"],
-            int(values["weeklyEnabled"]), values["weeklyDay"], values["weeklyTime"],
-            values["weeklyRetention"], values["safetyRetention"],
-        ))
+            updated_at=CURRENT_TIMESTAMP WHERE id=1""",
+            (
+                int(values["dailyEnabled"]),
+                values["dailyTime"],
+                values["dailyRetention"],
+                int(values["weeklyEnabled"]),
+                values["weeklyDay"],
+                values["weeklyTime"],
+                values["weeklyRetention"],
+                values["safetyRetention"],
+            ),
+        )
     _prune_backups("daily", values["dailyRetention"])
     _prune_backups("weekly", values["weeklyRetention"])
     _prune_safety_backups(values["safetyRetention"])
@@ -449,9 +484,15 @@ def list_backups() -> list[dict]:
         if not path.is_file() or category is None:
             continue
         stat = path.stat()
-        result.append({"filename": path.name, "category": category,
-                       "createdAt": datetime.fromtimestamp(stat.st_mtime, timezone()).isoformat(),
-                       "size": stat.st_size, "safety": category in SAFETY_BACKUP_TYPES})
+        result.append(
+            {
+                "filename": path.name,
+                "category": category,
+                "createdAt": datetime.fromtimestamp(stat.st_mtime, timezone()).isoformat(),
+                "size": stat.st_size,
+                "safety": category in SAFETY_BACKUP_TYPES,
+            }
+        )
     return sorted(result, key=lambda item: (item["createdAt"], item["filename"]), reverse=True)
 
 
@@ -459,7 +500,11 @@ def backup_path(filename: str) -> Path:
     if Path(filename).name != filename:
         raise BackupError("Invalid backup filename.")
     candidate = (backup_directory() / filename).resolve()
-    if candidate.parent != backup_directory().resolve() or not candidate.is_file() or _category_for_path(candidate) is None:
+    if (
+        candidate.parent != backup_directory().resolve()
+        or not candidate.is_file()
+        or _category_for_path(candidate) is None
+    ):
         raise BackupError("Backup not found.")
     return candidate
 
@@ -477,7 +522,10 @@ def validate_compatible_database(path: Path) -> None:
             metadata = dict(db.execute("SELECT key,value FROM app_metadata"))
     except sqlite3.DatabaseError as error:
         raise BackupError("This is not a compatible Plant Care database.") from error
-    if metadata.get("app_id") != APP_ID or int(metadata.get("schema_version", "0")) > SCHEMA_VERSION:
+    if (
+        metadata.get("app_id") != APP_ID
+        or int(metadata.get("schema_version", "0")) > SCHEMA_VERSION
+    ):
         raise BackupError("This database is not compatible with this Plant Care version.")
 
 
@@ -485,7 +533,9 @@ def validate_backup(path: Path) -> None:
     validate_compatible_database(path)
     try:
         with sqlite3.connect(path) as db:
-            row = db.execute("SELECT app_id,format_version FROM plant_care_backup_metadata WHERE id=1").fetchone()
+            row = db.execute(
+                "SELECT app_id,format_version FROM plant_care_backup_metadata WHERE id=1"
+            ).fetchone()
     except sqlite3.DatabaseError as error:
         raise BackupError("This is not a Plant Care backup.") from error
     if row is None or row[0] != BACKUP_APP_ID or row[1] != BACKUP_FORMAT_VERSION:
@@ -499,7 +549,9 @@ def _clear_sidecars() -> None:
 
 def _replace_staged(staged: Path, confirmation: str, *, backup_only: bool) -> str:
     if confirmation != ("RESTORE" if backup_only else "IMPORT"):
-        raise BackupError(f"Type {'RESTORE' if backup_only else 'IMPORT'} to replace the current database.")
+        raise BackupError(
+            f"Type {'RESTORE' if backup_only else 'IMPORT'} to replace the current database."
+        )
     (validate_backup if backup_only else validate_compatible_database)(staged)
     initialize(staged)
     (validate_backup if backup_only else validate_compatible_database)(staged)
@@ -514,7 +566,10 @@ def _replace_staged(staged: Path, confirmation: str, *, backup_only: bool) -> st
 
 def restore_server_backup(filename: str, confirmation: str) -> str:
     source = backup_path(filename)
-    with exclusive_database_access(), tempfile.TemporaryDirectory(dir=database_path().parent) as directory:
+    with (
+        exclusive_database_access(),
+        tempfile.TemporaryDirectory(dir=database_path().parent) as directory,
+    ):
         staged = Path(directory) / "staged.sqlite3"
         with sqlite3.connect(source) as original, sqlite3.connect(staged) as copy:
             original.backup(copy)
@@ -526,7 +581,10 @@ def restore_uploaded_backup(upload: bytes, confirmation: str) -> str:
         raise BackupError("Choose a backup file.")
     if len(upload) > 100 * 1024 * 1024:
         raise BackupError("Backup files cannot exceed 100 MB.")
-    with exclusive_database_access(), tempfile.TemporaryDirectory(dir=database_path().parent) as directory:
+    with (
+        exclusive_database_access(),
+        tempfile.TemporaryDirectory(dir=database_path().parent) as directory,
+    ):
         staged = Path(directory) / "staged.sqlite3"
         staged.write_bytes(upload)
         return _replace_staged(staged, confirmation, backup_only=True)
@@ -537,7 +595,10 @@ def import_database(upload: bytes, confirmation: str) -> str:
         raise BackupError("Choose a database file.")
     if len(upload) > 100 * 1024 * 1024:
         raise BackupError("Database files cannot exceed 100 MB.")
-    with exclusive_database_access(), tempfile.TemporaryDirectory(dir=database_path().parent) as directory:
+    with (
+        exclusive_database_access(),
+        tempfile.TemporaryDirectory(dir=database_path().parent) as directory,
+    ):
         staged = Path(directory) / "staged.sqlite3"
         staged.write_bytes(upload)
         return _replace_staged(staged, confirmation, backup_only=False)
@@ -546,8 +607,10 @@ def import_database(upload: bytes, confirmation: str) -> str:
 def run_scheduled_backups(current: datetime | None = None) -> None:
     current = current or datetime.now(timezone())
     settings = backup_settings()
-    schedules = (("daily", settings["dailyEnabled"], settings["dailyTime"], None),
-                 ("weekly", settings["weeklyEnabled"], settings["weeklyTime"], settings["weeklyDay"]))
+    schedules = (
+        ("daily", settings["dailyEnabled"], settings["dailyTime"], None),
+        ("weekly", settings["weeklyEnabled"], settings["weeklyTime"], settings["weeklyDay"]),
+    )
     for category, enabled, time_text, weekday in schedules:
         if not enabled:
             continue
@@ -555,15 +618,22 @@ def run_scheduled_backups(current: datetime | None = None) -> None:
         due = current.date()
         if weekday is not None:
             due -= timedelta(days=(due.weekday() - weekday) % 7)
-        scheduled = datetime.combine(due, datetime.min.time(), timezone()).replace(hour=hour, minute=minute)
+        scheduled = datetime.combine(due, datetime.min.time(), timezone()).replace(
+            hour=hour, minute=minute
+        )
         if scheduled > current:
             due -= timedelta(days=7 if weekday is not None else 1)
         with transaction() as db:
-            row = db.execute("SELECT last_scheduled_date FROM backup_runs WHERE backup_type=?", (category,)).fetchone()
+            row = db.execute(
+                "SELECT last_scheduled_date FROM backup_runs WHERE backup_type=?", (category,)
+            ).fetchone()
             if row is None:
                 db.execute("INSERT INTO backup_runs VALUES (?,?)", (category, due.isoformat()))
                 continue
             if row["last_scheduled_date"] >= due.isoformat():
                 continue
-            db.execute("UPDATE backup_runs SET last_scheduled_date=? WHERE backup_type=?", (due.isoformat(), category))
+            db.execute(
+                "UPDATE backup_runs SET last_scheduled_date=? WHERE backup_type=?",
+                (due.isoformat(), category),
+            )
         create_backup(category)
