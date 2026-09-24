@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import io
 import sqlite3
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from PIL import Image
 
 import app.main as main_module
-from app.database import initialize
+from app.database import backup_settings, initialize, run_scheduled_backups
 from app.main import app
 
 
@@ -218,6 +218,8 @@ def test_delete_is_irreversible_and_requires_typed_confirmation(tmp_path, monkey
     assert client.delete(f"/api/plants/{plant['id']}").status_code == 422
     assert client.delete(f"/api/plants/{plant['id']}?confirmation=DELETE").status_code == 204
     assert client.get(f"/api/plants/{plant['id']}").status_code == 404
+    safety = [item for item in client.get("/api/backups").json() if item["category"] == "pre-delete"]
+    assert len(safety) == 1
 
 
 def test_v1_database_migrates_current_cadence_and_closes_open_rounds(tmp_path, monkeypatch):
@@ -267,6 +269,57 @@ def test_backup_restore_keeps_valid_plant_data(tmp_path, monkeypatch):
     )
     assert restored.status_code == 200
     assert client.get(f"/api/plants/{plant['id']}").json()["archived_at"] is None
+
+
+def test_managed_backup_has_marker_restores_and_preserves_schedule(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    before = make_plant(client, nickname="Before")
+    created = client.post("/api/backups")
+    assert created.status_code == 200
+    backups = client.get("/api/backups").json()
+    assert backups[0]["category"] == "on-demand"
+    filename = backups[0]["filename"]
+    assert client.get(f"/api/backups/{filename}/download").status_code == 200
+    settings = client.get("/api/backups/settings").json()
+    settings.update({"dailyTime": "02:30", "dailyRetention": 3})
+    assert client.put("/api/backups/settings", json=settings).status_code == 200
+    make_plant(client, nickname="After")
+    response = client.post("/api/backups/restore", json={"filename": filename, "confirmation": "RESTORE"})
+    assert response.status_code == 200
+    assert response.json()["backup"].startswith("pre-restore-")
+    assert client.get(f"/api/plants/{before['id']}").status_code == 200
+    assert [item["nickname"] for item in client.get("/api/plants").json()] == ["Before"]
+    assert client.get("/api/backups/settings").json()["dailyTime"] == "02:30"
+
+
+def test_unmarked_upload_is_rejected_without_replacing_live_data(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    plant = make_plant(client)
+    with sqlite3.connect(tmp_path / "unmarked.sqlite3") as db:
+        db.execute("CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        db.execute("INSERT INTO app_metadata VALUES ('app_id', 'plant-care')")
+        db.execute("INSERT INTO app_metadata VALUES ('schema_version', '4')")
+    response = client.post(
+        "/api/backups/restore-upload",
+        data={"confirmation": "RESTORE"},
+        files={"file": ("unmarked.sqlite3", (tmp_path / "unmarked.sqlite3").read_bytes(), "application/x-sqlite3")},
+    )
+    assert response.status_code == 422
+    assert client.get(f"/api/plants/{plant['id']}").status_code == 200
+
+
+def test_backup_schedule_catches_up_once_and_retains_only_the_configured_count(tmp_path, monkeypatch):
+    client_for(tmp_path, monkeypatch)
+    settings = backup_settings()
+    settings.update({"weeklyEnabled": False, "dailyRetention": 1})
+    with sqlite3.connect(tmp_path / "plant-care.sqlite3") as db:
+        db.execute("UPDATE backup_settings SET daily_enabled=1, weekly_enabled=0, daily_retention=1")
+    first = datetime(2026, 9, 1, 2, 0, tzinfo=main_module.TZ)
+    run_scheduled_backups(first)
+    run_scheduled_backups(first + timedelta(days=1))
+    run_scheduled_backups(first + timedelta(days=2))
+    items = client_for(tmp_path, monkeypatch).get("/api/backups").json()
+    assert [item["category"] for item in items] == ["daily"]
 
 
 def test_photo_is_processed_and_can_become_a_cover(tmp_path, monkeypatch):

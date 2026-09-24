@@ -48,8 +48,10 @@ docker compose up -d
 curl --fail http://127.0.0.1:8000/api/health
 ```
 
-Expose it only through your trusted LAN or Tailscale Serve/ACLs; it has no user accounts and must not be port-forwarded to the public internet. Before an update, download an in-app backup or copy `data/plant_care.sqlite3`. A container recreation does not remove the mounted data.
+Expose it only through your trusted LAN or Tailscale Serve/ACLs; it has no user accounts and must not be port-forwarded to the public internet. Before an update, use the in-app backup feature rather than copying a live SQLite main file; WAL sidecar files can make a raw copy incomplete. A container recreation does not remove the mounted data.
 
 ## Backup and restore
 
-Settings provides a SQLite download containing plants, histories, notes, fertilizer records, and optimized photos. Restore validates the application identity, schema compatibility, SQLite integrity, and foreign keys, and writes a pre-restore snapshot inside the data directory before replacing the live database.
+Settings creates self-contained SQLite backups containing plants, histories, notes, fertilizer records, and optimized photos. They are retained in `data/backups/`, marked with the Plant Care backup identity, and can be downloaded, restored, or deleted with typed confirmation. Daily (01:00, keep 7) and weekly (Sunday 01:00, keep 8) schedules are configurable in Settings; the server runs a single missed backup after it returns from downtime.
+
+Restores accept only marked Plant Care backups, stage and validate SQLite integrity/foreign keys/schema compatibility, create a `pre-restore` safety snapshot, then atomically replace the live database. The existing backup schedule is retained. Compatible older Plant Care databases can be handled through the separate typed `IMPORT` flow. Permanent plant deletion also creates a `pre-delete` safety snapshot. Safety backups share their own configurable retention limit.

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 import sqlite3
-import uuid
+from contextlib import asynccontextmanager, suppress
 from datetime import date, datetime, timedelta
 from math import floor
 from pathlib import Path
@@ -19,11 +20,21 @@ from pydantic import BaseModel, Field, model_validator
 from .database import (
     APP_ID,
     SCHEMA_VERSION,
+    BackupError,
+    backup_path,
+    backup_settings,
     connect,
-    database_path,
+    create_backup,
+    delete_backup,
     exclusive_database_access,
+    import_database,
     initialize,
+    list_backups,
+    restore_server_backup,
+    restore_uploaded_backup,
+    run_scheduled_backups,
     transaction,
+    update_backup_settings,
 )
 
 try:
@@ -39,7 +50,28 @@ MAX_STORED_BYTES = 5 * 1024 * 1024
 MAX_EDGE = 2560
 THUMB_EDGE = 480
 
-app = FastAPI(title="Plant Care", version="0.1.0")
+async def backup_scheduler() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(run_scheduled_backups)
+        except (BackupError, OSError, sqlite3.Error):
+            pass
+        await asyncio.sleep(60)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    initialize()
+    task = asyncio.create_task(backup_scheduler())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
+app = FastAPI(title="Plant Care", version="0.1.0", lifespan=lifespan)
 
 
 def now() -> str:
@@ -136,6 +168,21 @@ class FertilizerInput(BaseModel):
 
 class RestoreConfirmation(BaseModel):
     confirmation: str
+
+
+class BackupAction(RestoreConfirmation):
+    filename: str
+
+
+class BackupSettingsInput(BaseModel):
+    dailyEnabled: bool
+    dailyTime: str
+    dailyRetention: int
+    weeklyEnabled: bool
+    weeklyDay: int
+    weeklyTime: str
+    weeklyRetention: int
+    safetyRetention: int
 
 
 def last_watering(db: sqlite3.Connection, plant_id: int) -> sqlite3.Row | None:
@@ -240,11 +287,6 @@ def event_payload(db: sqlite3.Connection, row: sqlite3.Row, event_type: str) -> 
         ).fetchone()
         result["product_name"] = product["name"] if product else "Deleted product"
     return result
-
-
-@app.on_event("startup")
-def startup() -> None:
-    initialize()
 
 
 @app.get("/api/health")
@@ -419,13 +461,19 @@ def restore_plant(plant_id: int):
 def delete_plant(plant_id: int, confirmation: str = Query(default="")):
     if confirmation != "DELETE":
         raise HTTPException(422, "Pass confirmation=DELETE to permanently remove this plant.")
-    with transaction() as db:
-        require_row(
-            db.execute("SELECT * FROM plants WHERE id=?", (plant_id,)).fetchone(),
-            "Plant not found.",
-        )
-        db.execute("DELETE FROM plants WHERE id=?", (plant_id,))
-        return Response(status_code=204)
+    with exclusive_database_access():
+        with transaction() as db:
+            require_row(
+                db.execute("SELECT * FROM plants WHERE id=?", (plant_id,)).fetchone(),
+                "Plant not found.",
+            )
+        try:
+            create_backup("pre-delete")
+        except (BackupError, OSError, sqlite3.Error) as error:
+            raise HTTPException(500, "Could not create a safety backup; plant was not deleted.") from error
+        with transaction() as db:
+            db.execute("DELETE FROM plants WHERE id=?", (plant_id,))
+    return Response(status_code=204)
 
 
 @app.post("/api/plants/{plant_id}/checks")
@@ -930,90 +978,88 @@ def timeline(db: sqlite3.Connection, plant_id: int) -> list[dict]:
     )
 
 
+def backup_error(error: BackupError) -> HTTPException:
+    return HTTPException(422, str(error))
+
+
+@app.get("/api/backups")
+def backups() -> list[dict]:
+    return list_backups()
+
+
+@app.post("/api/backups")
+def create_on_demand_backup() -> FileResponse:
+    try:
+        path = create_backup()
+    except BackupError as error:
+        raise backup_error(error) from error
+    return FileResponse(path, filename=path.name, media_type="application/vnd.sqlite3")
+
+
 @app.get("/api/backups/download")
 def download_backup():
-    source_path = database_path()
-    temp_path = (
-        source_path.parent
-        / f"plant-care-backup-{datetime.now(TZ).strftime('%Y%m%d-%H%M%S')}.sqlite3"
-    )
-    with exclusive_database_access():
-        source = connect(source_path)
-        target = sqlite3.connect(temp_path)
-        try:
-            source.backup(target)
-        finally:
-            target.close()
-            source.close()
-    data = temp_path.read_bytes()
-    temp_path.unlink(missing_ok=True)
-    return Response(
-        content=data,
-        media_type="application/x-sqlite3",
-        headers={"Content-Disposition": f'attachment; filename="{temp_path.name}"'},
-    )
+    """Compatibility route for the original Settings download button."""
+    return create_on_demand_backup()
 
 
-def validate_backup(path: Path) -> None:
-    with sqlite3.connect(path) as db:
-        db.row_factory = sqlite3.Row
-        integrity = db.execute("PRAGMA integrity_check").fetchone()[0]
-        if integrity != "ok":
-            raise HTTPException(422, "Backup integrity check failed.")
-        foreign_keys = db.execute("PRAGMA foreign_key_check").fetchall()
-        if foreign_keys:
-            raise HTTPException(422, "Backup foreign-key check failed.")
-        try:
-            metadata = {
-                row["key"]: row["value"] for row in db.execute("SELECT key,value FROM app_metadata")
-            }
-        except sqlite3.DatabaseError as error:
-            raise HTTPException(422, "This is not a Plant Care backup.") from error
-        if (
-            metadata.get("app_id") != APP_ID
-            or int(metadata.get("schema_version", "0")) > SCHEMA_VERSION
-        ):
-            raise HTTPException(422, "Backup is not compatible with this Plant Care version.")
+@app.get("/api/backups/settings")
+def get_backup_settings() -> dict:
+    return backup_settings()
+
+
+@app.put("/api/backups/settings")
+def put_backup_settings(payload: BackupSettingsInput) -> dict:
+    try:
+        return update_backup_settings(payload.model_dump())
+    except BackupError as error:
+        raise backup_error(error) from error
+
+
+@app.get("/api/backups/{filename}/download")
+def download_saved_backup(filename: str) -> FileResponse:
+    try:
+        path = backup_path(filename)
+    except BackupError as error:
+        raise backup_error(error) from error
+    return FileResponse(path, filename=path.name, media_type="application/vnd.sqlite3")
+
+
+@app.post("/api/backups/restore")
+def restore_saved_backup(payload: BackupAction):
+    try:
+        safety = restore_server_backup(payload.filename, payload.confirmation)
+    except BackupError as error:
+        raise backup_error(error) from error
+    return {"restored": True, "backup": safety}
 
 
 @app.post("/api/backups/restore-upload")
 async def restore_backup(file: UploadFile = File(...), confirmation: str = Form(default="")):
-    if confirmation != "RESTORE":
-        raise HTTPException(422, "Type RESTORE to replace the current database.")
-    raw = await file.read(100 * 1024 * 1024)
-    if not raw:
-        raise HTTPException(422, "Choose a backup file.")
-    target = database_path()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    upload_path = target.parent / f".restore-{uuid.uuid4()}.sqlite3"
-    upload_path.write_bytes(raw)
+    raw = await file.read(100 * 1024 * 1024 + 1)
     try:
-        validate_backup(upload_path)
-        initialize(upload_path)
-        validate_backup(upload_path)
-        with exclusive_database_access():
-            snapshot = (
-                target.parent
-                / f"plant-care-pre-restore-{datetime.now(TZ).strftime('%Y%m%d-%H%M%S')}.sqlite3"
-            )
-            live = connect(target)
-            backup = sqlite3.connect(snapshot)
-            try:
-                live.backup(backup)
-            finally:
-                backup.close()
-                live.close()
-            restored = sqlite3.connect(upload_path)
-            destination = sqlite3.connect(target)
-            try:
-                restored.backup(destination)
-            finally:
-                destination.close()
-                restored.close()
-        validate_backup(target)
-    finally:
-        upload_path.unlink(missing_ok=True)
-    return {"restored": True}
+        safety = restore_uploaded_backup(raw, confirmation)
+    except BackupError as error:
+        raise backup_error(error) from error
+    return {"restored": True, "backup": safety}
+
+
+@app.post("/api/backups/import")
+async def import_legacy_database(file: UploadFile = File(...), confirmation: str = Form(default="")):
+    raw = await file.read(100 * 1024 * 1024 + 1)
+    try:
+        safety = import_database(raw, confirmation)
+    except BackupError as error:
+        raise backup_error(error) from error
+    return {"imported": True, "backup": safety}
+
+
+@app.delete("/api/backups/{filename}", status_code=204)
+def remove_backup(filename: str, confirmation: str = Query(default="")) -> Response:
+    try:
+        delete_backup(filename, confirmation)
+    except BackupError as error:
+        raise backup_error(error) from error
+    return Response(status_code=204)
 
 
 frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"

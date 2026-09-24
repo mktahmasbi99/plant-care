@@ -43,6 +43,13 @@ export type Fertilizer = {
   description: string;
   archived_at: string | null;
 };
+export type BackupCategory = "daily" | "weekly" | "on-demand" | "pre-import" | "pre-restore" | "pre-delete";
+export type BackupFile = { filename: string; category: BackupCategory; createdAt: string; size: number; safety: boolean };
+export type BackupSettings = {
+  dailyEnabled: boolean; dailyTime: string; dailyRetention: number;
+  weeklyEnabled: boolean; weeklyDay: number; weeklyTime: string;
+  weeklyRetention: number; safetyRetention: number;
+};
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -148,10 +155,29 @@ export const api = {
   },
   setCover: (photo: number) =>
     request(`/api/photos/${photo}/cover`, { method: "POST" }),
-  async restore(file: File) {
+  backups: () => request<BackupFile[]>("/api/backups"),
+  backupSettings: () => request<BackupSettings>("/api/backups/settings"),
+  saveBackupSettings: (data: BackupSettings) => request<BackupSettings>("/api/backups/settings", {
+    method: "PUT", body: JSON.stringify(data),
+  }),
+  async createBackup() {
+    const response = await fetch("/api/backups", { method: "POST" });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({ detail: "Backup failed." }))).detail);
+    return { blob: await response.blob(), filename: response.headers.get("content-disposition")?.match(/filename="?([^";]+)"?/)?.[1] || "plant-care-backup.sqlite3" };
+  },
+  async downloadBackup(filename: string) {
+    const response = await fetch(`/api/backups/${encodeURIComponent(filename)}/download`);
+    if (!response.ok) throw new Error((await response.json().catch(() => ({ detail: "Download failed." }))).detail);
+    return { blob: await response.blob(), filename };
+  },
+  restoreSavedBackup: (filename: string, confirmation: string) => request<{ backup: string }>("/api/backups/restore", {
+    method: "POST", body: JSON.stringify({ filename, confirmation }),
+  }),
+  deleteBackup: (filename: string, confirmation: string) => request(`/api/backups/${encodeURIComponent(filename)}?confirmation=${encodeURIComponent(confirmation)}`, { method: "DELETE" }),
+  async restore(file: File, confirmation: string) {
     const form = new FormData();
     form.append("file", file);
-    form.append("confirmation", "RESTORE");
+    form.append("confirmation", confirmation);
     const response = await fetch("/api/backups/restore-upload", {
       method: "POST",
       body: form,
@@ -162,5 +188,11 @@ export const api = {
           .detail,
       );
     return response.json();
+  },
+  async importLegacy(file: File, confirmation: string) {
+    const form = new FormData(); form.append("file", file); form.append("confirmation", confirmation);
+    const response = await fetch("/api/backups/import", { method: "POST", body: form });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({ detail: "Import failed." }))).detail);
+    return response.json() as Promise<{ backup: string }>;
   },
 };
