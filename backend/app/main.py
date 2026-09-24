@@ -5,6 +5,7 @@ import os
 import sqlite3
 import uuid
 from datetime import date, datetime, timedelta
+from math import floor
 from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -74,16 +75,11 @@ def local_today() -> str:
     return date_string(today())
 
 
-class CadenceInput(BaseModel):
-    interval_days: int = Field(ge=1, le=365)
-
-
 class PlantInput(BaseModel):
     species: str = Field(min_length=1, max_length=160)
     nickname: str = Field(default="", max_length=160)
     location: str = Field(default="", max_length=160)
     care_note: str = Field(default="", max_length=10000)
-    recommendation: CadenceInput
     initial_last_watered: str | None = None
 
 
@@ -114,6 +110,10 @@ class WateringInput(BaseModel):
     note: str = Field(default="", max_length=5000)
 
 
+class SnoozeInput(BaseModel):
+    until_date: str
+
+
 class JournalInput(BaseModel):
     care_date: str
     body: str = Field(min_length=1, max_length=10000)
@@ -138,21 +138,6 @@ class RestoreConfirmation(BaseModel):
     confirmation: str
 
 
-def recommendation_for(db: sqlite3.Connection, plant_id: int) -> sqlite3.Row:
-    return require_row(
-        db.execute(
-            "SELECT * FROM watering_recommendations WHERE plant_id=? AND effective_to IS NULL",
-            (plant_id,),
-        ).fetchone(),
-        "Plant has no current watering recommendation.",
-    )
-
-
-def cadence_label(recommendation: sqlite3.Row) -> str:
-    value = recommendation["cadence_value"]
-    return f"Every {value} day" + ("" if value == 1 else "s")
-
-
 def last_watering(db: sqlite3.Connection, plant_id: int) -> sqlite3.Row | None:
     return db.execute(
         "SELECT * FROM watering_events WHERE plant_id=? ORDER BY care_date DESC, id DESC LIMIT 1",
@@ -167,64 +152,51 @@ def last_check(db: sqlite3.Connection, plant_id: int) -> sqlite3.Row | None:
     ).fetchone()
 
 
-def latest_recheck(db: sqlite3.Connection, plant_id: int) -> sqlite3.Row | None:
-    return db.execute(
-        """SELECT * FROM plant_checks WHERE plant_id=? AND outcome='not_watered'
-           AND next_check_date IS NOT NULL ORDER BY care_date DESC, created_at DESC, id DESC LIMIT 1""",
-        (plant_id,),
-    ).fetchone()
-
-
-def event_key(row: sqlite3.Row) -> tuple[str, str, int]:
-    return (row["care_date"], row["created_at"], row["id"])
-
-
-def next_check(db: sqlite3.Connection, plant_id: int, recommendation: sqlite3.Row) -> date | None:
-    watering = last_watering(db, plant_id)
-    recheck = latest_recheck(db, plant_id)
-    if recheck and (not watering or event_key(recheck) > event_key(watering)):
-        return parse_date(recheck["next_check_date"])
-    if watering:
-        return parse_date(watering["care_date"]) + timedelta(days=recommendation["cadence_value"])
-    return None
-
-
-def care_status(
-    db: sqlite3.Connection,
-    plant_id: int,
-    last_watered: str | None,
-    recommendation: sqlite3.Row,
-    current: date,
-) -> dict:
-    scheduled = next_check(db, plant_id, recommendation)
-    if not scheduled:
-        return {
-            "status": "never_watered",
-            "next_check_date": None,
-            "days_until_check": None,
-            "days_since": None,
-        }
-    days_until = (scheduled - current).days
-    status = (
-        "overdue"
-        if days_until < 0
-        else "due"
-        if days_until == 0
-        else "due_soon"
-        if days_until == 1
-        else "on_track"
+def watering_signal(db: sqlite3.Connection, plant: sqlite3.Row, current: date) -> dict:
+    dates = [
+        parse_date(row["care_date"])
+        for row in db.execute(
+            """SELECT DISTINCT care_date FROM watering_events
+               WHERE plant_id=? AND care_date<=? ORDER BY care_date DESC LIMIT 6""",
+            (plant["id"], current.isoformat()),
+        )
+    ]
+    last = last_watering(db, plant["id"])
+    days_since = (current - parse_date(last["care_date"])).days if last else None
+    gaps = [(dates[index] - dates[index + 1]).days for index in range(len(dates) - 1)]
+    weights = [0.5**index for index in range(len(gaps))]
+    estimate = (
+        floor(sum(gap * weight for gap, weight in zip(gaps, weights)) / sum(weights) + 0.5)
+        if gaps
+        else None
     )
+    snoozed_until = plant["snoozed_until"]
+    if snoozed_until and snoozed_until > current.isoformat():
+        level = "snoozed"
+    elif (
+        days_since is not None
+        and estimate is not None
+        and days_since >= max(estimate * 2, estimate + 7)
+    ):
+        level = "strong_amber"
+    elif days_since is not None and estimate is not None and days_since >= estimate:
+        level = "amber"
+    elif snoozed_until and snoozed_until <= current.isoformat():
+        # A migrated recheck can exist before the plant has enough history to learn a gap.
+        level = "amber"
+    else:
+        level = "neutral"
     return {
-        "status": status,
-        "next_check_date": scheduled.isoformat(),
-        "days_until_check": days_until,
-        "days_since": (current - parse_date(last_watered)).days if last_watered else None,
+        "level": level,
+        "days_since": days_since,
+        "estimated_interval_days": estimate,
+        "interval_count": len(gaps),
+        "snoozed_until": snoozed_until,
     }
 
 
 def plant_payload(db: sqlite3.Connection, plant: sqlite3.Row, current: date | None = None) -> dict:
     current = current or today()
-    recommendation = recommendation_for(db, plant["id"])
     watering = last_watering(db, plant["id"])
     check = last_check(db, plant["id"])
     cover = db.execute(
@@ -240,21 +212,13 @@ def plant_payload(db: sqlite3.Connection, plant: sqlite3.Row, current: date | No
         "archived_at": plant["archived_at"],
         "created_at": plant["created_at"],
         "sort_position": plant["sort_position"],
-        "recommendation": {
-            "id": recommendation["id"],
-            "interval_days": recommendation["cadence_value"],
-            "label": cadence_label(recommendation),
-            "effective_from": recommendation["effective_from"],
-        },
         "last_watered": watering["care_date"] if watering else None,
         "last_check": (
             {"date": check["care_date"], "outcome": check["outcome"], "id": check["id"]}
             if check
             else None
         ),
-        "status": care_status(
-            db, plant["id"], watering["care_date"] if watering else None, recommendation, current
-        ),
+        "watering_signal": watering_signal(db, plant, current),
         "cover_photo_id": cover["id"] if cover else None,
     }
 
@@ -264,10 +228,7 @@ def dashboard_payload(db: sqlite3.Connection, current: date) -> dict:
         "SELECT * FROM plants WHERE archived_at IS NULL ORDER BY sort_position, id"
     ).fetchall()
     cards = [plant_payload(db, plant, current) for plant in plants]
-    due_count = sum(
-        card["status"]["status"] in ("never_watered", "due", "overdue") for card in cards
-    )
-    return {"server_date": current.isoformat(), "due_count": due_count, "plants": cards}
+    return {"server_date": current.isoformat(), "plants": cards}
 
 
 def event_payload(db: sqlite3.Connection, row: sqlite3.Row, event_type: str) -> dict:
@@ -333,18 +294,6 @@ def create_plant(payload: PlantInput):
             ),
         )
         plant_id = cursor.lastrowid
-        db.execute(
-            """INSERT INTO watering_recommendations
-               (plant_id,cadence_kind,cadence_value,effective_from,source,created_at)
-               VALUES (?,?,?,?, 'manual',?)""",
-            (
-                plant_id,
-                "days",
-                payload.recommendation.interval_days,
-                local_today(),
-                timestamp,
-            ),
-        )
         if initial:
             db.execute(
                 """INSERT INTO watering_events(plant_id,care_date,note,created_at,updated_at)
@@ -387,13 +336,6 @@ def get_plant(plant_id: int):
             "Plant not found.",
         )
         response = plant_payload(db, plant)
-        response["recommendation_history"] = [
-            dict(row)
-            for row in db.execute(
-                "SELECT * FROM watering_recommendations WHERE plant_id=? ORDER BY effective_from DESC, id DESC",
-                (plant_id,),
-            )
-        ]
         response["timeline"] = timeline(db, plant_id)
         return response
 
@@ -420,27 +362,25 @@ def update_plant(plant_id: int, payload: PlantUpdate):
         return plant_payload(db, plant)
 
 
-@app.put("/api/plants/{plant_id}/recommendation")
-def change_recommendation(plant_id: int, payload: CadenceInput):
+@app.put("/api/plants/{plant_id}/snooze")
+def snooze_plant(plant_id: int, payload: SnoozeInput):
+    until = parse_date(payload.until_date)
+    current = today()
+    if until <= current or until > current + timedelta(days=365):
+        raise HTTPException(422, "Choose a snooze date within the next 365 days.")
     with transaction() as db:
-        require_row(
-            db.execute("SELECT id FROM plants WHERE id=?", (plant_id,)).fetchone(),
+        plant = require_row(
+            db.execute("SELECT * FROM plants WHERE id=?", (plant_id,)).fetchone(),
             "Plant not found.",
         )
-        current = recommendation_for(db, plant_id)
-        timestamp = now()
+        if watering_signal(db, plant, current)["level"] not in {"amber", "strong_amber"}:
+            raise HTTPException(409, "This plant has no watering signal to snooze.")
         db.execute(
-            "UPDATE watering_recommendations SET effective_to=? WHERE id=?",
-            (local_today(), current["id"]),
-        )
-        db.execute(
-            """INSERT INTO watering_recommendations
-               (plant_id,cadence_kind,cadence_value,effective_from,source,created_at)
-               VALUES (?,?,?,?, 'manual',?)""",
-            (plant_id, "days", payload.interval_days, local_today(), timestamp),
+            "UPDATE plants SET snoozed_until=?,updated_at=? WHERE id=?",
+            (until.isoformat(), now(), plant_id),
         )
         plant = require_row(db.execute("SELECT * FROM plants WHERE id=?", (plant_id,)).fetchone())
-        return plant_payload(db, plant)
+        return plant_payload(db, plant, current)
 
 
 @app.post("/api/plants/{plant_id}/archive")
@@ -522,6 +462,7 @@ def record_ad_hoc_check(plant_id: int, payload: CheckInput):
                 "UPDATE plant_checks SET watering_event_id=? WHERE id=?",
                 (watering.lastrowid, check_id),
             )
+            db.execute("UPDATE plants SET snoozed_until=NULL WHERE id=?", (plant_id,))
         return dict(
             require_row(db.execute("SELECT * FROM plant_checks WHERE id=?", (check_id,)).fetchone())
         )
@@ -559,6 +500,8 @@ def update_check(check_id: int, payload: CheckInput):
                     "UPDATE watering_events SET care_date=?,note=?,updated_at=? WHERE id=?",
                     (care_day.isoformat(), payload.note, now(), watering_id),
                 )
+        if payload.outcome == "watered":
+            db.execute("UPDATE plants SET snoozed_until=NULL WHERE id=?", (check["plant_id"],))
         db.execute(
             "UPDATE plant_checks SET outcome=?,care_date=?,watering_event_id=?,next_check_date=?,updated_at=? WHERE id=?",
             (
@@ -600,6 +543,7 @@ def create_watering(plant_id: int, payload: WateringInput):
             "INSERT INTO watering_events(plant_id,care_date,note,created_at,updated_at) VALUES (?,?,?,?,?)",
             (plant_id, care_day.isoformat(), payload.note, now(), now()),
         )
+        db.execute("UPDATE plants SET snoozed_until=NULL WHERE id=?", (plant_id,))
         return dict(
             require_row(
                 db.execute(

@@ -10,7 +10,7 @@ from pathlib import Path
 DB_ENV = "PLANT_CARE_DB"
 DEFAULT_DB = "./data/plant_care.sqlite3"
 APP_ID = "plant-care"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 _write_lock = threading.RLock()
 
 
@@ -89,6 +89,33 @@ def _migrate_v2(db: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_v3(db: sqlite3.Connection) -> None:
+    """Keep pending manually chosen rechecks as one-time snoozes."""
+    if "snoozed_until" not in _columns(db, "plants"):
+        db.execute("ALTER TABLE plants ADD COLUMN snoozed_until TEXT")
+    for plant in db.execute("SELECT id FROM plants"):
+        recheck = db.execute(
+            """SELECT care_date,next_check_date,created_at FROM plant_checks
+               WHERE plant_id=? AND outcome='not_watered' AND next_check_date IS NOT NULL
+               ORDER BY care_date DESC,created_at DESC,id DESC LIMIT 1""",
+            (plant["id"],),
+        ).fetchone()
+        watering = db.execute(
+            """SELECT care_date,created_at FROM watering_events WHERE plant_id=?
+               ORDER BY care_date DESC,created_at DESC,id DESC LIMIT 1""",
+            (plant["id"],),
+        ).fetchone()
+        if recheck and (
+            not watering
+            or (recheck["care_date"], recheck["created_at"])
+            > (watering["care_date"], watering["created_at"])
+        ):
+            db.execute(
+                "UPDATE plants SET snoozed_until=? WHERE id=?",
+                (recheck["next_check_date"], plant["id"]),
+            )
+
+
 def initialize(path: Path | None = None) -> None:
     with connect(path) as db:
         db.executescript(
@@ -104,6 +131,7 @@ def initialize(path: Path | None = None) -> None:
                 care_note TEXT NOT NULL DEFAULT '',
                 archived_at TEXT,
                 sort_position INTEGER NOT NULL DEFAULT 0,
+                snoozed_until TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -209,6 +237,8 @@ def initialize(path: Path | None = None) -> None:
         version = int(version_row["value"]) if version_row else 0
         if version < 2:
             _migrate_v2(db)
+        if version < 3:
+            _migrate_v3(db)
         db.execute(
             "INSERT OR REPLACE INTO app_metadata(key, value) VALUES (?, ?)",
             ("app_id", APP_ID),

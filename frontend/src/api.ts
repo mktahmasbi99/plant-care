@@ -1,12 +1,4 @@
-export type Status =
-  "never_watered" | "on_track" | "due_soon" | "due" | "overdue";
-
-export type Recommendation = {
-  id: number;
-  interval_days: number;
-  label: string;
-  effective_from: string;
-};
+export type SignalLevel = "neutral" | "amber" | "strong_amber" | "snoozed";
 export type Plant = {
   id: number;
   species: string;
@@ -16,25 +8,24 @@ export type Plant = {
   care_note: string;
   archived_at: string | null;
   created_at: string;
-  recommendation: Recommendation;
   last_watered: string | null;
   last_check: {
     id: number;
     date: string;
     outcome: "watered" | "not_watered";
   } | null;
-  status: {
-    status: Status;
-    next_check_date: string | null;
+  watering_signal: {
+    level: SignalLevel;
     days_since: number | null;
-    days_until_check: number | null;
+    estimated_interval_days: number | null;
+    interval_count: number;
+    snoozed_until: string | null;
   };
   cover_photo_id: number | null;
   sort_position: number;
 };
 export type Dashboard = {
   server_date: string;
-  due_count: number;
   plants: Plant[];
 };
 export type TimelineEvent = Record<string, unknown> & {
@@ -45,7 +36,6 @@ export type TimelineEvent = Record<string, unknown> & {
 };
 export type PlantDetail = Plant & {
   timeline: TimelineEvent[];
-  recommendation_history: Record<string, unknown>[];
 };
 export type Fertilizer = {
   id: number;
@@ -84,10 +74,10 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
-  recommendation: (id: number, data: unknown) =>
-    request<Plant>(`/api/plants/${id}/recommendation`, {
+  snooze: (id: number, untilDate: string) =>
+    request<Plant>(`/api/plants/${id}/snooze`, {
       method: "PUT",
-      body: JSON.stringify(data),
+      body: JSON.stringify({ until_date: untilDate }),
     }),
   archive: (id: number) =>
     request(`/api/plants/${id}/archive`, { method: "POST" }),

@@ -31,28 +31,13 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { api, Dashboard, Fertilizer, Plant, PlantDetail, Status } from "./api";
+import { api, Dashboard, Fertilizer, Plant, PlantDetail } from "./api";
 
 type Page = "home" | "detail" | "fertilizer" | "settings" | "add";
-const statusText: Record<Status, string> = {
-  never_watered: "Needs first check",
-  on_track: "On track",
-  due_soon: "Check tomorrow",
-  due: "Due today",
-  overdue: "Overdue",
-};
-const relative = (days: number | null) =>
-  days === null
-    ? "No watering recorded"
-    : days === 0
-      ? "Watered today"
-      : days === 1
-        ? "Watered yesterday"
-        : `Watered ${days} days ago`;
 function lastWateredLabel(plant: Plant) {
-  const days = plant.status.days_since;
+  const days = plant.watering_signal.days_since;
   if (!plant.last_watered || days === null) return "Never";
-  if (days < 0 || days > 35) return plant.last_watered;
+  if (days < 0) return plant.last_watered;
   if (days === 0) return "Today";
   if (days === 1) return "Yesterday";
   return `${days} day${days === 1 ? "" : "s"} ago`;
@@ -62,13 +47,22 @@ function dateAfter(day: string, days: number) {
   result.setDate(result.getDate() + days);
   return result.toISOString().slice(0, 10);
 }
-function scheduleText(plant: Plant) {
-  const days = plant.status.days_until_check;
-  if (plant.status.status === "never_watered") return "No watering recorded";
-  if (days === 0) return "Check today";
-  if (days === 1) return "Check tomorrow";
-  if (days !== null && days > 1) return `Check in ${days} days`;
-  return `Overdue by ${Math.abs(days || 0)} day${Math.abs(days || 0) === 1 ? "" : "s"}`;
+function signalText(plant: Plant) {
+  const signal = plant.watering_signal;
+  if (signal.level === "snoozed") return `Snoozed until ${signal.snoozed_until}`;
+  if (signal.level === "strong_amber") return "Much longer than usual";
+  if (signal.level === "amber") return "Around the usual interval";
+  if (signal.estimated_interval_days === null) return "Learning from watering history";
+  return "Before the usual interval";
+}
+function patternText(plant: Plant) {
+  const signal = plant.watering_signal;
+  if (signal.estimated_interval_days === null) return "No interval learned yet";
+  const days = signal.estimated_interval_days;
+  return `Usual interval: about ${days} day${days === 1 ? "" : "s"}${signal.interval_count === 1 ? " (tentative)" : ""}`;
+}
+function canSnooze(plant: Plant) {
+  return ["amber", "strong_amber"].includes(plant.watering_signal.level);
 }
 
 function Avatar({ plant, large = false }: { plant: Plant; large?: boolean }) {
@@ -99,12 +93,14 @@ function Avatar({ plant, large = false }: { plant: Plant; large?: boolean }) {
 function PlantCard({
   plant,
   position,
-  onAction,
+  onWater,
+  onSnooze,
   onOpen,
 }: {
   plant: Plant;
   position: number;
-  onAction: (plant: Plant, outcome: "watered" | "not_watered") => void;
+  onWater: (plant: Plant) => void;
+  onSnooze: (plant: Plant) => void;
   onOpen: () => void;
 }) {
   const sortable = useSortable({ id: plant.id });
@@ -115,7 +111,7 @@ function PlantCard({
         transform: CSS.Transform.toString(sortable.transform),
         transition: sortable.transition,
       }}
-      className={`plant-card ${plant.status.status} ${sortable.isDragging ? "dragging" : ""}`}
+      className={`plant-card signal-${plant.watering_signal.level} ${sortable.isDragging ? "dragging" : ""}`}
     >
       <button
         className="drag-handle"
@@ -143,25 +139,26 @@ function PlantCard({
             {plant.location ? ` · ${plant.location}` : ""}
           </span>
         </span>
-        <span className="status-pill">{statusText[plant.status.status]}</span>
       </button>
       <div className="water-summary">
         <span>Last watered</span>
         <strong>{lastWateredLabel(plant)}</strong>
-        <small>{relative(plant.status.days_since)}</small>
+        <span
+          className={`signal-dot ${plant.watering_signal.level}`}
+          role="img"
+          aria-label={signalText(plant)}
+        />
+        <small>{plant.last_watered || "No date recorded"}</small>
       </div>
       <div className="card-footer">
-        <span>
-          {scheduleText(plant)} · {plant.recommendation.label}
-        </span>
+        <span>{signalText(plant)} · {patternText(plant)}</span>
         <div className="actions">
-          <button
-            className="secondary"
-            onClick={() => onAction(plant, "not_watered")}
-          >
-            Not watered
-          </button>
-          <button className="water" onClick={() => onAction(plant, "watered")}>
+          {canSnooze(plant) && (
+            <button className="secondary" onClick={() => onSnooze(plant)}>
+              Snooze
+            </button>
+          )}
+          <button className="water" onClick={() => onWater(plant)}>
             <Droplets size={16} /> Watered
           </button>
         </div>
@@ -172,12 +169,14 @@ function PlantCard({
 
 function PlantList({
   plants,
-  onAction,
+  onWater,
+  onSnooze,
   onOpen,
   onReorder,
 }: {
   plants: Plant[];
-  onAction: (plant: Plant, outcome: "watered" | "not_watered") => void;
+  onWater: (plant: Plant) => void;
+  onSnooze: (plant: Plant) => void;
   onOpen: (id: number) => void;
   onReorder: (ids: number[]) => void;
 }) {
@@ -211,7 +210,8 @@ function PlantList({
               key={plant.id}
               plant={plant}
               position={index + 1}
-              onAction={onAction}
+              onWater={onWater}
+              onSnooze={onSnooze}
               onOpen={() => onOpen(plant.id)}
             />
           ))}
@@ -234,9 +234,6 @@ function PlantForm({
   const [nickname, setNickname] = useState(initial?.nickname || "");
   const [location, setLocation] = useState(initial?.location || "");
   const [careNote, setCareNote] = useState(initial?.care_note || "");
-  const [intervalDays, setIntervalDays] = useState(
-    initial?.recommendation.interval_days || 7,
-  );
   const [lastWatered, setLastWatered] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
@@ -250,7 +247,6 @@ function PlantForm({
           nickname,
           location,
           care_note: careNote,
-          recommendation: { interval_days: intervalDays },
           initial_last_watered: lastWatered || null,
         },
         photo,
@@ -277,21 +273,6 @@ function PlantForm({
         Location <span className="optional">optional</span>
         <input value={location} onChange={(e) => setLocation(e.target.value)} />
       </label>
-      <fieldset>
-        <legend>Check interval after watering</legend>
-        <div className="cadence">
-          <span>Every</span>
-          <input
-            aria-label="Check interval in days"
-            type="number"
-            min="1"
-            max="365"
-            value={intervalDays}
-            onChange={(e) => setIntervalDays(Number(e.target.value))}
-          />
-          <span>days</span>
-        </div>
-      </fieldset>
       {!initial && (
         <>
           <label>
@@ -334,7 +315,7 @@ function PlantForm({
   );
 }
 
-function RecheckSheet({
+function SnoozeSheet({
   plant,
   serverDate,
   onChoose,
@@ -353,11 +334,14 @@ function RecheckSheet({
         className="recheck-sheet"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="recheck-title"
+        aria-labelledby="snooze-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <h2 id="recheck-title">Check {plant.display_name} again</h2>
-        <p>It was not watered. Choose when to check it again.</p>
+        <h2 id="snooze-title">Snooze {plant.display_name}</h2>
+        <p>
+          The signal will return on the day you choose. Last watered time stays
+          visible.
+        </p>
         <div className="recheck-options">
           <button
             className="secondary"
@@ -386,9 +370,9 @@ function RecheckSheet({
           }}
         >
           <label>
-            Check again in
+            Snooze for
             <input
-              aria-label="Days until next check"
+              aria-label="Days to snooze"
               required
               min="1"
               max="365"
@@ -399,7 +383,7 @@ function RecheckSheet({
             />
             days
           </label>
-          <button className="secondary">Use this interval</button>
+          <button className="secondary">Snooze until then</button>
         </form>
         <button className="sheet-cancel" onClick={onClose}>
           Cancel
@@ -492,7 +476,7 @@ export function App() {
   const [snack, setSnack] = useState<{ text: string; checkId: number } | null>(
     null,
   );
-  const [recheckPlant, setRecheckPlant] = useState<Plant | null>(null);
+  const [snoozePlant, setSnoozePlant] = useState<Plant | null>(null);
   const reload = useCallback(async () => {
     try {
       const [next, products] = await Promise.all([
@@ -532,35 +516,33 @@ export function App() {
       setError(e instanceof Error ? e.message : "Could not open plant.");
     }
   };
-  const saveCheck = async (
-    plant: Plant,
-    outcome: "watered" | "not_watered",
-    nextCheckDate?: string,
-  ) => {
+  const saveWatering = async (plant: Plant) => {
     if (offline) return;
     try {
       const result = (await api.adHocCheck(plant.id, {
-        outcome,
-        next_check_date: nextCheckDate,
+        outcome: "watered",
       })) as { id: number };
       setSnack({
-        text:
-          outcome === "watered"
-            ? `${plant.display_name} marked watered.`
-            : `${plant.display_name} will be checked again on ${nextCheckDate}.`,
+        text: `${plant.display_name} marked watered.`,
         checkId: result.id,
       });
-      setRecheckPlant(null);
       await reload();
       if (detail?.id === plant.id) await openPlant(plant.id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save that check.");
+      setError(e instanceof Error ? e.message : "Could not record watering.");
     }
   };
-  const action = (plant: Plant, outcome: "watered" | "not_watered") =>
-    outcome === "not_watered"
-      ? setRecheckPlant(plant)
-      : void saveCheck(plant, outcome);
+  const saveSnooze = async (plant: Plant, untilDate: string) => {
+    if (offline) return;
+    try {
+      await api.snooze(plant.id, untilDate);
+      setSnoozePlant(null);
+      await reload();
+      if (detail?.id === plant.id) await openPlant(plant.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not snooze this plant.");
+    }
+  };
   const reorder = async (ids: number[]) => {
     const oldDashboard = dashboard;
     const arrange = (items: Plant[]) =>
@@ -594,24 +576,16 @@ export function App() {
     }
   };
   const returnToToday = async () => {
-    await reload();
     setDetail(null);
     setPage("home");
+    await reload();
   };
   const updatePlant = async (data: Record<string, unknown>) => {
     if (!detail) return;
     try {
       const plantData = { ...data };
-      const recommendation = plantData.recommendation;
-      delete plantData.recommendation;
       delete plantData.initial_last_watered;
       await api.updatePlant(detail.id, plantData);
-      if (
-        recommendation &&
-        JSON.stringify(recommendation) !==
-          JSON.stringify({ interval_days: detail.recommendation.interval_days })
-      )
-        await api.recommendation(detail.id, recommendation);
       await reload();
       await openPlant(detail.id);
     } catch (e) {
@@ -634,9 +608,14 @@ export function App() {
     <main className="app-shell">
       <header>
         <div>
-          <span className="eyebrow">
+          <button
+            type="button"
+            className="eyebrow brand-link"
+            aria-label="Go to Today"
+            onClick={() => void returnToToday()}
+          >
             <Sprout size={16} /> Plant Care
-          </span>
+          </button>
           <h1>{title}</h1>
         </div>
         {page === "home" && (
@@ -668,20 +647,18 @@ export function App() {
             <>
               <section className="schedule-heading">
                 <h2>
-                  {dashboard.due_count
-                    ? `${dashboard.due_count} pot${dashboard.due_count === 1 ? "" : "s"} need checking today`
-                    : "All pots are on schedule"}
+                  Your plants
                 </h2>
                 <p>
-                  {dashboard.due_count
-                    ? "Highlighted pots need your attention. Drag the handle to arrange your routine."
-                    : "Every pot is visible below in your chosen order."}
+                  Watering signals reflect each plant&apos;s history. Check its
+                  conditions before deciding to water.
                 </p>
               </section>
               {dashboard.plants.length ? (
                 <PlantList
                   plants={dashboard.plants}
-                  onAction={action}
+                  onWater={(plant) => void saveWatering(plant)}
+                  onSnooze={setSnoozePlant}
                   onOpen={(id) => void openPlant(id)}
                   onReorder={(ids) => void reorder(ids)}
                 />
@@ -706,7 +683,8 @@ export function App() {
           onBack={() => void returnToToday()}
           onRefresh={() => void openPlant(detail.id)}
           onUpdate={updatePlant}
-          onAction={action}
+          onWater={(plant) => void saveWatering(plant)}
+          onSnooze={setSnoozePlant}
           onArchive={async () => {
             if (confirm(`Archive ${detail.display_name}?`)) {
               await api.archive(detail.id);
@@ -768,14 +746,14 @@ export function App() {
           </button>
         </div>
       )}
-      {recheckPlant && (
-        <RecheckSheet
-          plant={recheckPlant}
+      {snoozePlant && (
+        <SnoozeSheet
+          plant={snoozePlant}
           serverDate={serverDate}
           onChoose={(nextDate) =>
-            void saveCheck(recheckPlant, "not_watered", nextDate)
+            void saveSnooze(snoozePlant, nextDate)
           }
-          onClose={() => setRecheckPlant(null)}
+          onClose={() => setSnoozePlant(null)}
         />
       )}
     </main>
@@ -787,7 +765,7 @@ function Empty({ onAdd }: { onAdd: () => void }) {
     <div className="empty">
       <Sprout size={40} />
       <h2>Your routine starts here</h2>
-      <p>Add each pot with a check interval.</p>
+      <p>Add each pot and record watering to learn its usual interval.</p>
       <button className="water" onClick={onAdd}>
         <Plus /> Add your first plant
       </button>
@@ -808,7 +786,8 @@ function PlantDetailView({
   onBack,
   onRefresh,
   onUpdate,
-  onAction,
+  onWater,
+  onSnooze,
   onArchive,
   onDelete,
 }: {
@@ -817,7 +796,8 @@ function PlantDetailView({
   onBack: () => void;
   onRefresh: () => void;
   onUpdate: (data: Record<string, unknown>) => Promise<void>;
-  onAction: (plant: Plant, outcome: "watered" | "not_watered") => void;
+  onWater: (plant: Plant) => void;
+  onSnooze: (plant: Plant) => void;
   onArchive: () => void;
   onDelete: () => Promise<void>;
 }) {
@@ -864,9 +844,17 @@ function PlantDetailView({
             {detail.species}
             {detail.location ? ` · ${detail.location}` : ""}
           </p>
-          <strong>Last watered: {detail.last_watered || "Never"}</strong>
+          <strong className="detail-watered">
+            Last watered: {lastWateredLabel(detail)}
+            <span
+              className={`signal-dot ${detail.watering_signal.level}`}
+              role="img"
+              aria-label={signalText(detail)}
+            />
+          </strong>
           <small>
-            {scheduleText(detail)} · {detail.recommendation.label}
+            {detail.last_watered || "No date recorded"} · {signalText(detail)} ·{" "}
+            {patternText(detail)}
           </small>
         </div>
         <div className="detail-controls">
@@ -904,13 +892,12 @@ function PlantDetailView({
         </div>
       </div>
       <div className="detail-actions">
-        <button
-          className="secondary"
-          onClick={() => onAction(detail, "not_watered")}
-        >
-          Not watered
-        </button>
-        <button className="water" onClick={() => onAction(detail, "watered")}>
+        {canSnooze(detail) && (
+          <button className="secondary" onClick={() => onSnooze(detail)}>
+            Snooze
+          </button>
+        )}
+        <button className="water" onClick={() => onWater(detail)}>
           <Droplets size={16} /> Watered
         </button>
       </div>

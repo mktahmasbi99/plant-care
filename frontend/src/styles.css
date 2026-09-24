@@ -73,6 +73,19 @@ h3 {
   align-items: center;
   margin: 0 0 0.25rem;
 }
+.brand-link {
+  border: 0;
+  background: none;
+  padding: 0;
+}
+.brand-link:hover {
+  text-decoration: underline;
+}
+.brand-link:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+  border-radius: 2px;
+}
 .page {
   display: grid;
   gap: 1rem;
@@ -138,10 +151,12 @@ h3 {
   box-shadow: 0 5px 18px #4861300b;
   overflow: hidden;
 }
-.plant-card.due,
-.plant-card.overdue,
-.plant-card.never_watered {
-  border-left: 5px solid #d89b3d;
+.plant-card.signal-amber {
+  border-color: #c88a26;
+}
+.plant-card.signal-strong_amber {
+  border: 2px solid #a45d11;
+  box-shadow: 0 0 0 3px #d9a94b40, 0 8px 24px #8f581526;
 }
 .card-main {
   width: 100%;
@@ -228,9 +243,10 @@ small {
 }
 .water-summary {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   padding: 0 0.95rem 0.75rem;
   gap: 0.45rem;
+  flex-wrap: wrap;
 }
 .water-summary span {
   color: #657167;
@@ -241,6 +257,29 @@ small {
 }
 .water-summary small {
   margin-left: auto;
+}
+.signal-dot {
+  display: inline-block;
+  width: 0.72rem;
+  height: 0.72rem;
+  flex: none;
+  border-radius: 50%;
+  background: #aab5aa;
+  border: 1px solid #798a7c;
+}
+.signal-dot.amber {
+  background: #e6a12d;
+  border-color: #9d6716;
+}
+.signal-dot.strong_amber {
+  background: #b56714;
+  border-color: #78430d;
+  box-shadow: 0 0 0 3px #dca44d55;
+}
+.detail-watered {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 .card-footer {
   border-top: 1px solid #edf0e8;
@@ -631,20 +670,6 @@ nav button.active {
 .plant-card {
   position: relative;
 }
-.plant-card.due,
-.plant-card.overdue,
-.plant-card.never_watered {
-  border: 2px solid #d89b3d;
-  box-shadow:
-    0 0 0 3px #e8bd6a45,
-    0 8px 24px #9b6c1d2b;
-}
-.plant-card.on_track,
-.plant-card.due_soon {
-  background: #fafbf8;
-  border-color: #e9ece5;
-  box-shadow: none;
-}
 .plant-card.dragging {
   opacity: 0.72;
   z-index: 4;
@@ -815,8 +840,8 @@ nav button.active {
     border-color: #304537;
     color: #e6efe6;
   }
-  .plant-card.on_track,
-  .plant-card.due_soon {
+  .plant-card.signal-neutral,
+  .plant-card.signal-snoozed {
     background: #1d2a20;
     border-color: #304537;
   }

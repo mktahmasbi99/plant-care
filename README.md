@@ -1,16 +1,16 @@
 # Plant Care
 
-A private, self-hosted plant-care routine for a single trusted household. It highlights each pot when its individually scheduled check is due while keeping the complete collection visible in your chosen order.
+A private, self-hosted plant-care routine for a single trusted household. It keeps every pot visible in your chosen order and shows gentle signals based on its watering history.
 
 ## What it records
 
 - Individual plants (species, nickname, location, permanent care routine)
-- Per-pot check intervals based on the last watering or a selected recheck date
-- **Watered** and **Not watered** actions, with quick recheck choices
+- Last watered dates and approximate intervals learned from recent watering history
+- **Watered** and **Snooze** actions, with quick snooze choices
 - Dated journal notes, occasional photos, fertilizer products and applications
 - Full timeline and self-contained SQLite backup/restore
 
-The app does not judge pot weight or make automatic horticultural decisions. It records your care decisions and shows when a pot is due for its configured check interval.
+The app does not judge pot weight or make automatic horticultural decisions. Amber signals indicate that more time has passed than usual; you decide whether conditions call for water.
 
 ## Local development
 

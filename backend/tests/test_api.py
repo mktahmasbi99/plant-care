@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import io
 import sqlite3
+from datetime import date
 
 from fastapi.testclient import TestClient
 from PIL import Image
 
+import app.main as main_module
 from app.database import initialize
 from app.main import app
 
@@ -21,7 +23,6 @@ def make_plant(client, **overrides):
         "species": "Monstera deliciosa",
         "nickname": "Kitchen Monstera",
         "location": "Kitchen",
-        "recommendation": {"interval_days": 4},
     }
     data.update(overrides)
     response = client.post("/api/plants", json=data)
@@ -29,35 +30,100 @@ def make_plant(client, **overrides):
     return response.json()
 
 
-def test_dashboard_derives_due_date_from_watering_without_creating_rounds(tmp_path, monkeypatch):
+def test_dashboard_learns_a_tentative_gap_and_shows_two_amber_levels(tmp_path, monkeypatch):
     client = client_for(tmp_path, monkeypatch)
-    plant = make_plant(client, initial_last_watered="2026-09-18")
-    dashboard = client.get("/api/dashboard?day=2026-09-22").json()
-    assert dashboard["due_count"] == 1
-    assert dashboard["plants"][0]["id"] == plant["id"]
-    assert dashboard["plants"][0]["status"] == {
-        "status": "due",
-        "next_check_date": "2026-09-22",
-        "days_until_check": 0,
-        "days_since": 4,
-    }
-
-
-def test_not_watered_uses_selected_recheck_and_undo_restores_due_state(tmp_path, monkeypatch):
-    client = client_for(tmp_path, monkeypatch)
-    plant = make_plant(client, initial_last_watered="2026-09-18")
-    check = client.post(
-        f"/api/plants/{plant['id']}/checks",
-        json={"outcome": "not_watered", "care_date": "2026-09-22", "next_check_date": "2026-09-25"},
-    )
-    assert check.status_code == 200
-    deferred = client.get("/api/dashboard?day=2026-09-22").json()["plants"][0]
-    assert deferred["status"]["status"] == "on_track"
-    assert deferred["status"]["next_check_date"] == "2026-09-25"
-    assert client.delete(f"/api/checks/{check.json()['id']}").status_code == 204
+    plant = make_plant(client, initial_last_watered="2026-01-01")
+    assert "recommendation" not in plant
+    with sqlite3.connect(tmp_path / "plant-care.sqlite3") as db:
+        assert db.execute("SELECT COUNT(*) FROM watering_recommendations").fetchone()[0] == 0
     assert (
-        client.get("/api/dashboard?day=2026-09-22").json()["plants"][0]["status"]["status"] == "due"
+        client.post(
+            f"/api/plants/{plant['id']}/waterings", json={"care_date": "2026-01-15"}
+        ).status_code
+        == 201
     )
+    before = client.get("/api/dashboard?day=2026-01-28").json()["plants"][0]
+    assert before["watering_signal"] == {
+        "level": "neutral",
+        "days_since": 13,
+        "estimated_interval_days": 14,
+        "interval_count": 1,
+        "snoozed_until": None,
+    }
+    assert (
+        client.get("/api/dashboard?day=2026-01-29").json()["plants"][0]["watering_signal"]["level"]
+        == "amber"
+    )
+    assert (
+        client.get("/api/dashboard?day=2026-02-12").json()["plants"][0]["watering_signal"]["level"]
+        == "strong_amber"
+    )
+
+
+def test_recent_gaps_have_double_the_weight_and_same_day_records_do_not_count(
+    tmp_path, monkeypatch
+):
+    client = client_for(tmp_path, monkeypatch)
+    plant = make_plant(client, initial_last_watered="2026-01-01")
+    for day in ("2026-01-08", "2026-01-22", "2026-02-19", "2026-02-19"):
+        assert (
+            client.post(f"/api/plants/{plant['id']}/waterings", json={"care_date": day}).status_code
+            == 201
+        )
+    signal = client.get("/api/dashboard?day=2026-02-20").json()["plants"][0]["watering_signal"]
+    assert signal["interval_count"] == 3
+    assert signal["estimated_interval_days"] == 21
+
+
+def test_only_five_most_recent_gaps_are_used(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    plant = make_plant(client, initial_last_watered="2026-01-01")
+    for day in ("2026-04-01", "2026-04-08", "2026-04-15", "2026-04-22", "2026-04-29", "2026-05-06"):
+        client.post(f"/api/plants/{plant['id']}/waterings", json={"care_date": day})
+    signal = client.get("/api/dashboard?day=2026-05-07").json()["plants"][0]["watering_signal"]
+    assert signal["interval_count"] == 5
+    assert signal["estimated_interval_days"] == 7
+
+
+def test_snooze_returns_on_selected_day_and_watering_clears_it(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    monkeypatch.setattr(main_module, "today", lambda: date(2026, 1, 29))
+    plant = make_plant(client, initial_last_watered="2026-01-01")
+    client.post(f"/api/plants/{plant['id']}/waterings", json={"care_date": "2026-01-15"})
+    assert (
+        client.put(
+            f"/api/plants/{plant['id']}/snooze", json={"until_date": "2026-01-29"}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.put(
+            f"/api/plants/{plant['id']}/snooze", json={"until_date": "2026-02-12"}
+        ).status_code
+        == 200
+    )
+    assert all(
+        event["type"] == "watering"
+        for event in client.get(f"/api/plants/{plant['id']}").json()["timeline"]
+    )
+    assert (
+        client.get("/api/dashboard?day=2026-02-11").json()["plants"][0]["watering_signal"]["level"]
+        == "snoozed"
+    )
+    assert (
+        client.get("/api/dashboard?day=2026-02-12").json()["plants"][0]["watering_signal"]["level"]
+        == "strong_amber"
+    )
+    assert (
+        client.post(
+            f"/api/plants/{plant['id']}/checks",
+            json={"outcome": "watered", "care_date": "2026-02-02"},
+        ).status_code
+        == 200
+    )
+    signal = client.get("/api/dashboard?day=2026-02-04").json()["plants"][0]["watering_signal"]
+    assert signal["snoozed_until"] is None
+    assert signal["level"] == "neutral"
 
 
 def test_recheck_must_be_after_care_date(tmp_path, monkeypatch):
@@ -74,7 +140,7 @@ def test_watering_history_date_can_change_or_be_deleted_with_its_linked_check(
     tmp_path, monkeypatch
 ):
     client = client_for(tmp_path, monkeypatch)
-    plant = make_plant(client)
+    plant = make_plant(client, initial_last_watered="2026-09-10")
     check = client.post(
         f"/api/plants/{plant['id']}/checks",
         json={"outcome": "watered", "care_date": "2026-09-20"},
@@ -88,11 +154,47 @@ def test_watering_history_date_can_change_or_be_deleted_with_its_linked_check(
     )
     updated = client.get(f"/api/plants/{plant['id']}").json()
     assert updated["last_watered"] == "2026-09-22"
+    assert updated["watering_signal"]["estimated_interval_days"] == 12
     assert client.delete(f"/api/waterings/{watering['id']}").status_code == 204
     after_delete = client.get(f"/api/plants/{plant['id']}").json()
-    assert not [
-        event for event in after_delete["timeline"] if event["type"] in {"watering", "check"}
-    ]
+    assert after_delete["watering_signal"]["estimated_interval_days"] is None
+    assert not [event for event in after_delete["timeline"] if event["type"] == "check"]
+    assert len([event for event in after_delete["timeline"] if event["type"] == "watering"]) == 1
+
+
+def test_v2_upgrade_keeps_history_and_carries_pending_recheck_into_snooze(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    plant = make_plant(client, initial_last_watered="2026-09-10")
+    check = client.post(
+        f"/api/plants/{plant['id']}/checks",
+        json={"outcome": "not_watered", "care_date": "2026-09-20", "next_check_date": "2026-09-30"},
+    )
+    assert check.status_code == 200
+    path = tmp_path / "plant-care.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute("ALTER TABLE plants DROP COLUMN snoozed_until")
+        db.execute("UPDATE app_metadata SET value='2' WHERE key='schema_version'")
+        db.execute(
+            """INSERT INTO watering_recommendations
+               (plant_id,cadence_kind,cadence_value,effective_from,source,created_at)
+               VALUES (?,'days',14,'2026-09-01','manual','2026-09-01')""",
+            (plant["id"],),
+        )
+    initialize(path)
+    pending = client.get("/api/dashboard?day=2026-09-24").json()["plants"][0]
+    assert pending["watering_signal"]["snoozed_until"] == "2026-09-30"
+    assert pending["watering_signal"]["level"] == "snoozed"
+    assert (
+        client.get("/api/dashboard?day=2026-09-30").json()["plants"][0]["watering_signal"]["level"]
+        == "amber"
+    )
+    detail = client.get(f"/api/plants/{plant['id']}").json()
+    assert any(
+        event["type"] == "check" and event["outcome"] == "not_watered"
+        for event in detail["timeline"]
+    )
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT cadence_value FROM watering_recommendations").fetchone()[0] == 14
 
 
 def test_order_is_persisted_and_requires_every_active_plant(tmp_path, monkeypatch):
