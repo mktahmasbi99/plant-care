@@ -32,6 +32,8 @@ import {
   X,
 } from "lucide-react";
 import { api, Dashboard, Fertilizer, Plant, PlantDetail } from "./api";
+import { InstallAppPanel, type PwaInstallState } from "./components/InstallAppPanel";
+import { usePwaInstall } from "./hooks/usePwaInstall";
 
 type Page = "home" | "detail" | "fertilizer" | "settings" | "add";
 function lastWateredLabel(plant: Plant) {
@@ -476,6 +478,7 @@ export function App() {
   const [snack, setSnack] = useState<{ text: string; checkId: number } | null>(
     null,
   );
+  const pwaInstall = usePwaInstall();
   const [snoozePlant, setSnoozePlant] = useState<Plant | null>(null);
   const reload = useCallback(async () => {
     try {
@@ -706,7 +709,7 @@ export function App() {
           onChanged={() => void reload()}
         />
       )}
-      {page === "settings" && <Settings onRestored={() => void reload()} />}
+      {page === "settings" && <Settings onRestored={() => void reload()} pwaInstall={pwaInstall} />}
       {page !== "add" && page !== "detail" && (
         <nav>
           <button
@@ -1203,7 +1206,7 @@ function FertilizerView({
     </section>
   );
 }
-function Settings({ onRestored }: { onRestored: () => void }) {
+function Settings({ onRestored, pwaInstall }: { onRestored: () => void; pwaInstall: PwaInstallState }) {
   const [file, setFile] = useState<File | null>(null);
   const [message, setMessage] = useState("");
   return (
@@ -1249,6 +1252,7 @@ function Settings({ onRestored }: { onRestored: () => void }) {
         </button>
         {message && <p className="muted">{message}</p>}
       </form>
+      <InstallAppPanel state={pwaInstall} />
     </section>
   );
 }

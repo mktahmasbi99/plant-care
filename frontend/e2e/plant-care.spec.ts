@@ -7,6 +7,7 @@ test('brand returns to Today from every page', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Settings' }).click()
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Install app' })).toBeVisible()
   await brand.click()
   await expect(today).toBeVisible()
 
