@@ -256,16 +256,18 @@ function WateringCalendar({
           );
         })}
       </div>
-      <button
-        type="button"
-        className="calendar-jump-today watering-calendar-jump-today"
-        onClick={() => {
-          setMonth(new Date(today.getFullYear(), today.getMonth(), 1));
-          onSelectDate(todayKey);
-        }}
-      >
-        Jump to today
-      </button>
+      {selectedDate !== todayKey && (
+        <button
+          type="button"
+          className="calendar-jump-today watering-calendar-jump-today"
+          onClick={() => {
+            setMonth(new Date(today.getFullYear(), today.getMonth(), 1));
+            onSelectDate(todayKey);
+          }}
+        >
+          Jump to today
+        </button>
+      )}
     </section>
   );
 }
