@@ -31,7 +31,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { api, BackupFile, BackupSettings, Dashboard, Fertilizer, Plant, PlantDetail } from "./api";
+import { api, BackupFile, BackupSettings, Dashboard, Fertilizer, Plant, PlantDetail, TimelineEvent } from "./api";
 import { InstallAppPanel, type PwaInstallState } from "./components/InstallAppPanel";
 import { usePwaInstall } from "./hooks/usePwaInstall";
 
@@ -167,6 +167,109 @@ function CalendarDialog({
     </div>
   );
 }
+
+function wateringEventDate(event: TimelineEvent) {
+  return String(event.care_date || event.created_at).slice(0, 10);
+}
+
+function WateringCalendar({
+  events,
+  selectedDate,
+  onSelectDate,
+}: {
+  events: TimelineEvent[];
+  selectedDate: string | null;
+  onSelectDate: (date: string) => void;
+}) {
+  const wateredDates = new Set(events.map(wateringEventDate));
+  const today = new Date();
+  const currentMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const todayKey = `${currentMonthKey}-${String(today.getDate()).padStart(2, "0")}`;
+  const latestWateredDate = [...wateredDates].sort().at(-1);
+  const [month, setMonth] = useState(() => {
+    const initial = latestWateredDate ? new Date(`${latestWateredDate}T12:00:00`) : today;
+    return new Date(initial.getFullYear(), initial.getMonth(), 1);
+  });
+  const year = month.getFullYear();
+  const monthIndex = month.getMonth();
+  const monthKey = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+  const monthLabel = new Intl.DateTimeFormat(undefined, {
+    month: "long",
+    year: "numeric",
+  }).format(month);
+  const firstWeekday = (new Date(year, monthIndex, 1).getDay() + 6) % 7;
+  const lastDay = new Date(year, monthIndex + 1, 0).getDate();
+  const days = Array.from({ length: firstWeekday + lastDay }, (_, index) =>
+    index < firstWeekday ? null : index - firstWeekday + 1,
+  );
+  const formatDate = (day: number) =>
+    `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+  return (
+    <section className="watering-calendar" aria-label="Plant watering calendar">
+      <div className="watering-calendar-month">
+        <button
+          type="button"
+          className="calendar-month-arrow"
+          aria-label="Previous month"
+          onClick={() => setMonth(new Date(year, monthIndex - 1, 1))}
+        >
+          ‹
+        </button>
+        <h4>{monthLabel}</h4>
+        <button
+          type="button"
+          className="calendar-month-arrow"
+          aria-label="Next month"
+          disabled={monthKey >= currentMonthKey}
+          onClick={() => setMonth(new Date(year, monthIndex + 1, 1))}
+        >
+          ›
+        </button>
+      </div>
+      <div className="watering-calendar-grid watering-calendar-weekdays" aria-hidden="true">
+        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => (
+          <span key={day}>{day}</span>
+        ))}
+      </div>
+      <div className="watering-calendar-grid watering-calendar-days">
+        {days.map((day, index) => {
+          if (day === null)
+            return <span className="watering-calendar-empty" key={`empty-${index}`} />;
+          const date = formatDate(day);
+          const watered = wateredDates.has(date);
+          const isToday = date === todayKey;
+          const label = new Date(year, monthIndex, day).toLocaleDateString();
+          return (
+            <button
+              type="button"
+              key={date}
+              className={`watering-calendar-day${watered ? " watered" : ""}${isToday ? " today" : ""}${selectedDate === date ? " selected" : ""}`}
+              aria-label={watered ? `${label}, watered` : label}
+              aria-pressed={selectedDate === date}
+              disabled={date > todayKey}
+              onClick={() => onSelectDate(date)}
+            >
+              <span>{day}</span>
+              {watered && <Droplets size={14} aria-hidden="true" />}
+            </button>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        className="calendar-jump-today watering-calendar-jump-today"
+        onClick={() => {
+          setMonth(new Date(today.getFullYear(), today.getMonth(), 1));
+          onSelectDate(todayKey);
+        }}
+      >
+        Jump to today
+      </button>
+    </section>
+  );
+}
+
 function signalText(plant: Plant) {
   const signal = plant.watering_signal;
   if (signal.level === "snoozed") return `Snoozed until ${signal.snoozed_until}`;
@@ -826,15 +929,6 @@ export function App() {
         <section className="page">
           {dashboard ? (
             <>
-              <section className="schedule-heading">
-                <h2>
-                  Your plants
-                </h2>
-                <p>
-                  Watering signals reflect each plant&apos;s history. Check its
-                  conditions before deciding to water.
-                </p>
-              </section>
               {dashboard.plants.length ? (
                 <PlantList
                   plants={dashboard.plants}
@@ -1007,6 +1101,14 @@ function PlantDetailView({
     careDate: string;
   } | null>(null);
   const [historyError, setHistoryError] = useState("");
+  const [addingWatering, setAddingWatering] = useState(false);
+  const [selectedWateringDate, setSelectedWateringDate] = useState<string | null>(null);
+  const wateringEvents = detail.timeline.filter(
+    (event) => event.type === "watering" || (event.type === "check" && event.outcome === "watered"),
+  );
+  const selectedWateringEvents = wateringEvents.filter(
+    (event) => wateringEventDate(event) === selectedWateringDate,
+  );
   if (mode === "edit")
     return (
       <section className="page panel">
@@ -1239,126 +1341,135 @@ function PlantDetailView({
           <button className="water">Record fertilizer</button>
         </form>
       )}
-      <h3 className="section-title">History</h3>
+      <h3 className="section-title">Watering calendar</h3>
       {historyError && <p className="history-error">{historyError}</p>}
-      <section className="timeline">
-        {detail.timeline.filter((event) => event.type !== "journal").length ? (
-          detail.timeline.filter((event) => event.type !== "journal").map((event) => (
-            <div className="timeline-event" key={`${event.type}-${event.id}`}>
-              <span className="event-date">
-                {String(event.care_date || event.created_at).slice(0, 10)}
-              </span>
-              <div>
-                <strong>
-                  {event.type === "check"
-                    ? event.outcome === "watered"
-                      ? "Watered during check"
-                      : "Checked — not watered"
-                    : event.type === "watering"
-                      ? "Watered"
-                      : event.type === "fertilizer"
-                        ? `Fertilized with ${event.product_name}`
-                        : event.type === "journal"
-                          ? "Journal note"
-                          : "Photo added"}
-                </strong>
-                {typeof event.body === "string" && <p>{event.body}</p>}
-                {typeof event.note === "string" && event.note && (
-                  <p>{event.note}</p>
-                )}
-                {event.type === "photo" && (
-                  <img
-                    src={`/api/photos/${event.id}?thumbnail=true`}
-                    alt="Plant history"
-                  />
-                )}
-                {event.type === "watering" &&
-                  (editingWatering?.id === event.id ? (
-                    <form
-                      className="watering-edit"
-                      onSubmit={async (formEvent) => {
-                        formEvent.preventDefault();
+      <WateringCalendar
+        events={wateringEvents}
+        selectedDate={selectedWateringDate}
+        onSelectDate={setSelectedWateringDate}
+      />
+      {selectedWateringDate && (
+        <section className="watering-day-details" aria-live="polite">
+          <div className="watering-day-heading">
+            <h4>
+              {new Date(`${selectedWateringDate}T12:00:00`).toLocaleDateString()}
+            </h4>
+            <button
+              className="water"
+              disabled={addingWatering}
+              onClick={async () => {
+                setAddingWatering(true);
+                setHistoryError("");
+                try {
+                  await api.watering(detail.id, { care_date: selectedWateringDate });
+                  onRefresh();
+                } catch (error) {
+                  setHistoryError(
+                    error instanceof Error
+                      ? error.message
+                      : "Could not add this watering.",
+                  );
+                } finally {
+                  setAddingWatering(false);
+                }
+              }}
+            >
+              <Droplets size={16} />
+              {addingWatering ? "Adding…" : "Add watering"}
+            </button>
+          </div>
+          {!selectedWateringEvents.length && (
+            <p className="muted">No watering recorded on this date.</p>
+          )}
+          {selectedWateringEvents.map((event) => (
+            <div className="watering-day-record" key={`${event.type}-${event.id}`}>
+              <strong>{event.type === "check" ? "Watered during check" : "Watered"}</strong>
+              {event.type === "watering" &&
+                (editingWatering?.id === event.id ? (
+                  <form
+                    className="watering-edit"
+                    onSubmit={async (formEvent) => {
+                      formEvent.preventDefault();
+                      try {
+                        await api.updateWatering(event.id, {
+                          care_date: editingWatering.careDate,
+                        });
+                        setEditingWatering(null);
+                        setSelectedWateringDate(null);
+                        setHistoryError("");
+                        onRefresh();
+                      } catch (error) {
+                        setHistoryError(
+                          error instanceof Error
+                            ? error.message
+                            : "Could not update this watering.",
+                        );
+                      }
+                    }}
+                  >
+                    <label>
+                      Watering date
+                      <input
+                        aria-label="Watering date"
+                        type="date"
+                        value={editingWatering.careDate}
+                        onChange={(inputEvent) =>
+                          setEditingWatering({
+                            ...editingWatering,
+                            careDate: inputEvent.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                    <button className="secondary">Save date</button>
+                    <button
+                      type="button"
+                      className="timeline-cancel"
+                      onClick={() => setEditingWatering(null)}
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                ) : (
+                  <div className="timeline-actions">
+                    <button
+                      className="secondary"
+                      onClick={() => {
+                        setEditingWatering({
+                          id: event.id,
+                          careDate: String(event.care_date),
+                        });
+                        setHistoryError("");
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="delete-menu-item"
+                      onClick={async () => {
+                        if (!confirm("Delete this watering record?")) return;
                         try {
-                          await api.updateWatering(event.id, {
-                            care_date: editingWatering.careDate,
-                          });
-                          setEditingWatering(null);
+                          await api.deleteWatering(event.id);
+                          setSelectedWateringDate(null);
                           setHistoryError("");
                           onRefresh();
                         } catch (error) {
                           setHistoryError(
                             error instanceof Error
                               ? error.message
-                              : "Could not update this watering.",
+                              : "Could not delete this watering.",
                           );
                         }
                       }}
                     >
-                      <label>
-                        Watering date
-                        <input
-                          aria-label="Watering date"
-                          type="date"
-                          value={editingWatering.careDate}
-                          onChange={(inputEvent) =>
-                            setEditingWatering({
-                              ...editingWatering,
-                              careDate: inputEvent.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                      <button className="secondary">Save date</button>
-                      <button
-                        type="button"
-                        className="timeline-cancel"
-                        onClick={() => setEditingWatering(null)}
-                      >
-                        Cancel
-                      </button>
-                    </form>
-                  ) : (
-                    <div className="timeline-actions">
-                      <button
-                        className="secondary"
-                        onClick={() => {
-                          setEditingWatering({
-                            id: event.id,
-                            careDate: String(event.care_date),
-                          });
-                          setHistoryError("");
-                        }}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        className="delete-menu-item"
-                        onClick={async () => {
-                          if (!confirm("Delete this watering record?")) return;
-                          try {
-                            await api.deleteWatering(event.id);
-                            setHistoryError("");
-                            onRefresh();
-                          } catch (error) {
-                            setHistoryError(
-                              error instanceof Error
-                                ? error.message
-                                : "Could not delete this watering.",
-                            );
-                          }
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  ))}
-              </div>
+                      Delete
+                    </button>
+                  </div>
+                ))}
             </div>
-          ))
-        ) : (
-          <p className="muted">No events yet.</p>
-        )}
-      </section>
+          ))}
+        </section>
+      )}
       {showDelete && (
         <DeletePlantDialog
           plant={detail}

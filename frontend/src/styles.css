@@ -15,9 +15,25 @@
   box-sizing: border-box;
 }
 body {
+  position: relative;
+  isolation: isolate;
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+}
+body::before {
+  position: fixed;
+  z-index: -1;
+  inset: 0;
+  background-color: #152019;
+  background-image:
+    linear-gradient(rgb(244 244 237 / 78%), rgb(244 244 237 / 78%)),
+    url("/plant-care-background.png");
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  content: "";
+  pointer-events: none;
 }
 button,
 input,
@@ -121,7 +137,7 @@ header.home-header .home-date-control {
   padding: 1.2rem;
   border: 1px solid #b9d4bd;
   border-radius: 1rem;
-  background: #f4f4ed;
+  background: rgb(244 244 237 / 94%);
   color: #18221a;
   box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 35%);
 }
@@ -265,7 +281,7 @@ h3 {
   gap: 1rem;
 }
 .banner {
-  background: #fff4ca;
+  background: rgb(255 244 202 / 92%);
   padding: 0.75rem 1rem;
   border-radius: 0.75rem;
   font-size: 0.9rem;
@@ -279,7 +295,7 @@ h3 {
 }
 .round-heading {
   display: flex;
-  background: #dcecdf;
+  background: rgb(220 236 223 / 88%);
   border-radius: 1.25rem;
   padding: 1.1rem;
   justify-content: space-between;
@@ -307,7 +323,7 @@ h3 {
   width: 2.8rem;
   height: 2.8rem;
   border-radius: 50%;
-  background: #dcecdf;
+  background: rgb(220 236 223 / 90%);
 }
 .progress span {
   position: absolute;
@@ -319,11 +335,12 @@ h3 {
 }
 .plant-card,
 .panel {
-  background: #fff;
+  background: rgb(255 255 255 / 88%);
   border: 1px solid #e3e5da;
   border-radius: 1.1rem;
   box-shadow: 0 5px 18px #4861300b;
   overflow: hidden;
+  backdrop-filter: blur(3px);
 }
 .plant-card.signal-amber {
   border-color: #c88a26;
@@ -344,7 +361,7 @@ h3 {
   color: inherit;
 }
 .card-main:hover {
-  background: #f7faf4;
+  background: rgb(247 250 244 / 82%);
 }
 .avatar {
   width: 3.25rem;
@@ -408,7 +425,7 @@ small {
   font-size: 0.84rem;
 }
 .status-pill {
-  background: #eef4e9;
+  background: rgb(238 244 233 / 88%);
   border-radius: 999px;
   padding: 0.25rem 0.5rem;
   font-size: 0.7rem;
@@ -492,17 +509,17 @@ small {
 }
 .water {
   color: #fff;
-  background: #326a42;
+  background: rgb(50 106 66 / 92%);
 }
 .water:hover {
   background: #285c37;
 }
 .secondary {
-  background: #edf2eb;
+  background: rgb(237 242 235 / 90%);
   color: #32523b;
 }
 .icon-button {
-  background: #dcecdf;
+  background: rgb(220 236 223 / 90%);
   color: #245233;
   padding: 0.65rem;
 }
@@ -521,14 +538,14 @@ small {
 }
 .wide-add {
   width: 100%;
-  background: #dcecdf;
+  background: rgb(220 236 223 / 90%);
   color: #29563a;
   padding: 0.85rem;
 }
 .empty {
   min-height: 17rem;
   text-align: center;
-  background: #fff;
+  background: rgb(255 255 255 / 88%);
   border-radius: 1.25rem;
   border: 1px dashed #bdcbbd;
   padding: 3rem 1.25rem;
@@ -630,7 +647,7 @@ legend {
 }
 .care-note {
   border-radius: 1rem;
-  background: #edf3e8;
+  background: rgb(237 243 232 / 88%);
   padding: 1rem;
   display: flex;
   justify-content: space-between;
@@ -648,14 +665,14 @@ legend {
 }
 .quick-tools button {
   flex-direction: column;
-  background: #fff;
+  background: rgb(255 255 255 / 88%);
   border: 1px solid #e3e5da;
   color: #3d5d44;
   font-size: 0.7rem;
   min-height: 4.4rem;
 }
 .inline-form {
-  background: #fff;
+  background: rgb(255 255 255 / 90%);
   border: 1px solid #e3e5da;
   padding: 0.85rem;
   border-radius: 1rem;
@@ -665,6 +682,113 @@ legend {
 .timeline {
   display: grid;
   gap: 0.6rem;
+}
+.watering-calendar {
+  padding: 1rem;
+  border: 1px solid #d7e1d4;
+  border-radius: 1rem;
+  background: rgb(251 252 248 / 88%);
+}
+.watering-calendar-month {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.watering-calendar-month h4 {
+  margin: 0;
+  text-align: center;
+}
+.watering-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.35rem;
+  text-align: center;
+}
+.watering-calendar-weekdays {
+  margin-bottom: 0.35rem;
+  color: #5c7160;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.watering-calendar-weekdays span {
+  padding: 0.45rem 0.1rem;
+}
+.watering-calendar-day,
+.watering-calendar-empty {
+  min-width: 0;
+  min-height: 3.1rem;
+}
+.watering-calendar-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  border: 1px solid transparent;
+  border-radius: 0.7rem;
+  color: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+button.watering-calendar-day {
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+}
+button.watering-calendar-day.watered {
+  background: #e5f0e6;
+  color: #285c37;
+}
+button.watering-calendar-day:not(:disabled):hover,
+button.watering-calendar-day:not(:disabled):focus-visible {
+  background: #d3e8d6;
+  outline: 2px solid #326a42;
+  outline-offset: 1px;
+}
+.watering-calendar-day:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.watering-calendar-day.today {
+  border-color: #c98024;
+  box-shadow: inset 0 0 0 1px #c98024;
+}
+button.watering-calendar-day.selected {
+  border-color: #326a42;
+  background: rgb(50 106 66 / 12%);
+  box-shadow: inset 0 0 0 1px #326a42;
+  color: #285c37;
+}
+.watering-day-details {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.85rem 1rem;
+  border-radius: 0.9rem;
+  background: rgb(232 240 232 / 88%);
+}
+.watering-day-details h4,
+.watering-day-record > strong {
+  margin: 0;
+}
+.watering-day-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.watering-day-details > p {
+  margin: 0;
+}
+.watering-day-record {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 .timeline-event {
   display: grid;
@@ -734,7 +858,7 @@ legend {
   gap: 0.75rem;
   padding: 0.8rem;
   border-radius: 0.8rem;
-  background: #fff;
+  background: rgb(255 255 255 / 88%);
   border: 1px solid #e3e5da;
   color: #456d50;
 }
@@ -762,7 +886,8 @@ legend {
   transform: translateX(-50%);
   width: min(92vw, 450px);
   color: #fff;
-  background: #25362a;
+  background: rgb(37 54 42 / 90%);
+  backdrop-filter: blur(8px);
   border-radius: 0.75rem;
   padding: 0.75rem 0.9rem;
   display: flex;
@@ -790,7 +915,7 @@ nav {
   width: min(760px, 100%);
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  background: #fffefaef;
+  background: rgb(255 254 250 / 88%);
   backdrop-filter: blur(10px);
   border-top: 1px solid #dce3d9;
   padding: 0.45rem max(0.5rem, env(safe-area-inset-right))
@@ -828,18 +953,6 @@ nav button.active {
   .plant-card {
     min-width: 0;
   }
-}
-.schedule-heading {
-  background: #dcecdf;
-  border-radius: 1.25rem;
-  padding: 1.1rem;
-}
-.schedule-heading h2 {
-  margin-bottom: 0.25rem;
-}
-.schedule-heading p {
-  margin: 0;
-  color: #426048;
 }
 .plant-card {
   position: relative;
@@ -883,16 +996,17 @@ nav button.active {
   inset: 0;
   display: grid;
   align-items: end;
-  background: #17201880;
+  background: rgb(23 32 24 / 48%);
 }
 .recheck-sheet {
-  background: #fff;
+  background: rgb(255 255 255 / 94%);
   color: #18221a;
   border-radius: 1.25rem 1.25rem 0 0;
   padding: 1.25rem;
   display: grid;
   gap: 0.85rem;
   box-shadow: 0 -12px 34px #0003;
+  backdrop-filter: blur(8px);
 }
 .recheck-sheet h2,
 .recheck-sheet p {
@@ -927,12 +1041,6 @@ nav button.active {
   color: #426048;
   font-weight: 700;
   padding: 0.4rem;
-}
-.schedule-heading {
-  color: #173b26;
-}
-.schedule-heading h2 {
-  color: #173b26;
 }
 .detail-controls {
   display: flex;
@@ -1008,11 +1116,16 @@ nav button.active {
     background: #263b2a;
   }
   .app-shell {
-    background: #152019;
+    background: transparent;
+  }
+  body::before {
+    background-image:
+      linear-gradient(rgb(12 22 15 / 62%), rgb(12 22 15 / 68%)),
+      url("/plant-care-background.png");
   }
   .calendar-dialog {
     border-color: #405a45;
-    background: #1d2a20;
+    background: rgb(29 42 32 / 94%);
     color: #edf4ed;
   }
   .calendar-dialog-header {
@@ -1035,44 +1148,72 @@ nav button.active {
   .calendar-day:disabled {
     color: #9aa49b;
   }
+  .watering-calendar {
+    background: rgb(29 42 32 / 86%);
+    border-color: #304537;
+  }
+  .watering-calendar-weekdays {
+    color: #aebcaf;
+  }
+  .watering-calendar-month .calendar-month-arrow {
+    color: #d4e7d5;
+  }
+  button.watering-calendar-day.watered {
+    background: #2b4030;
+    color: #d4e7d5;
+  }
+  button.watering-calendar-day:not(:disabled):hover,
+  button.watering-calendar-day:not(:disabled):focus-visible {
+    background: #354f3b;
+  }
+  button.watering-calendar-day.selected {
+    border-color: #9bd8a4;
+    background: rgb(50 106 66 / 30%);
+    box-shadow: inset 0 0 0 1px #9bd8a4;
+    color: #fff;
+  }
+  .watering-day-details {
+    background: rgb(36 53 40 / 86%);
+  }
   .plant-card,
   .panel,
   .inline-form,
   .quick-tools button,
   .simple-list > div,
   .empty {
-    background: #1d2a20;
+    background: rgb(29 42 32 / 86%);
     border-color: #304537;
     color: #e6efe6;
+    backdrop-filter: blur(3px);
   }
   .plant-card.signal-neutral,
   .plant-card.signal-snoozed {
-    background: #1d2a20;
+    background: rgb(29 42 32 / 86%);
     border-color: #304537;
   }
   .card-main:hover {
-    background: #25352a;
+    background: rgb(37 53 42 / 82%);
   }
   .card-footer,
   .timeline-event {
     border-color: #304537;
   }
   .round-heading {
-    background: #263b2a;
+    background: rgb(38 59 42 / 88%);
   }
   .progress::before {
-    background: #263b2a;
+    background: rgb(38 59 42 / 90%);
   }
   .placeholder {
     background: hsl(var(--plant-hue) 23% 25%);
     color: hsl(var(--plant-hue) 45% 75%);
   }
   .secondary {
-    background: #2b4030;
+    background: rgb(43 64 48 / 90%);
     color: #d4e7d5;
   }
   .care-note {
-    background: #243528;
+    background: rgb(36 53 40 / 86%);
   }
   .care-note p {
     color: #c6d9c8;
@@ -1101,14 +1242,14 @@ nav button.active {
     border-color: #435647;
   }
   nav {
-    background: #1b281dee;
+    background: rgb(27 40 30 / 88%);
     border-color: #354b39;
   }
   .empty p {
     color: #aebcaf;
   }
   .kebab-menu {
-    background: #243528;
+    background: rgb(36 53 40 / 94%);
     border-color: #435647;
   }
   .menu-item {
