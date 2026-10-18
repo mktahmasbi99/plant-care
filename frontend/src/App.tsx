@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   DndContext,
   DragEndEvent,
@@ -17,7 +17,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  Archive,
   BookOpen,
   Download,
   Droplets,
@@ -25,6 +24,7 @@ import {
   GripVertical,
   Leaf,
   MoreVertical,
+  NotebookPen,
   Pencil,
   Plus,
   Sprout,
@@ -48,6 +48,124 @@ function dateAfter(day: string, days: number) {
   const result = new Date(`${day}T12:00:00`);
   result.setDate(result.getDate() + days);
   return result.toISOString().slice(0, 10);
+}
+function CalendarDialog({
+  selectedDate,
+  maxDate,
+  onSelect,
+  onClose,
+}: {
+  selectedDate: string;
+  maxDate: string;
+  onSelect: (day: string) => void;
+  onClose: () => void;
+}) {
+  const [month, setMonth] = useState(() => {
+    const [year, monthNumber] = selectedDate.split("-").map(Number);
+    return new Date(year, monthNumber - 1, 1);
+  });
+  const year = month.getFullYear();
+  const monthIndex = month.getMonth();
+  const monthKey = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+  const lastDay = new Date(year, monthIndex + 1, 0).getDate();
+  const firstWeekday = (new Date(year, monthIndex, 1).getDay() + 6) % 7;
+  const maxMonth = maxDate.slice(0, 7);
+  const monthLabel = new Intl.DateTimeFormat(undefined, {
+    month: "long",
+    year: "numeric",
+  }).format(month);
+  const days = Array.from({ length: firstWeekday + lastDay }, (_, index) =>
+    index < firstWeekday ? null : index - firstWeekday + 1,
+  );
+  const formatDate = (day: number) =>
+    `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+  return (
+    <div
+      className="calendar-backdrop"
+      role="presentation"
+      onClick={onClose}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") onClose();
+      }}
+    >
+      <section
+        className="calendar-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="calendar-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="calendar-dialog-header">
+          <h2 id="calendar-title">Calendar</h2>
+          <button className="icon-button" aria-label="Close calendar" onClick={onClose}>
+            <X size={20} />
+          </button>
+        </header>
+        <div className="calendar-month-row">
+          <button
+            type="button"
+            className="calendar-month-arrow"
+            aria-label="Previous month"
+            onClick={() => setMonth(new Date(year, monthIndex - 1, 1))}
+          >
+            ‹
+          </button>
+          <h3>{monthLabel}</h3>
+          <button
+            type="button"
+            className="calendar-month-arrow"
+            aria-label="Next month"
+            disabled={monthKey >= maxMonth}
+            onClick={() => setMonth(new Date(year, monthIndex + 1, 1))}
+          >
+            ›
+          </button>
+        </div>
+        <div className="calendar-grid calendar-weekdays" aria-hidden="true">
+          {[
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+          ].map((weekday) => (
+            <span key={weekday}>{weekday.slice(0, 3)}</span>
+          ))}
+        </div>
+        <div className="calendar-grid calendar-days">
+          {days.map((day, index) =>
+            day === null ? (
+              <span className="calendar-day-empty" key={`empty-${index}`} />
+            ) : (
+              <button
+                type="button"
+                key={day}
+                className={[
+                  "calendar-day",
+                  formatDate(day) === selectedDate ? "selected" : "",
+                  formatDate(day) === maxDate ? "today" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                aria-label={new Date(year, monthIndex, day).toLocaleDateString()}
+                aria-pressed={formatDate(day) === selectedDate}
+                disabled={formatDate(day) > maxDate}
+                onClick={() => onSelect(formatDate(day))}
+              >
+                {day}
+              </button>
+            ),
+          )}
+        </div>
+        <button className="calendar-jump-today" onClick={() => onSelect(maxDate)}>
+          Jump to today
+        </button>
+      </section>
+    </div>
+  );
 }
 function signalText(plant: Plant) {
   const signal = plant.watering_signal;
@@ -480,12 +598,19 @@ export function App() {
   );
   const pwaInstall = usePwaInstall();
   const [snoozePlant, setSnoozePlant] = useState<Plant | null>(null);
+  const [dashboardDate, setDashboardDate] = useState<string | null>(null);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const viewedDate = useRef<string | undefined>(undefined);
+  const actualToday = useRef<string | undefined>(undefined);
   const reload = useCallback(async () => {
     try {
       const [next, products] = await Promise.all([
-        api.dashboard(),
+        api.dashboard(viewedDate.current),
         api.fertilizers(),
       ]);
+      if (!actualToday.current) actualToday.current = next.server_date;
+      viewedDate.current = next.server_date;
+      setDashboardDate(next.server_date);
       setDashboard(next);
       setFertilizers(products);
       setError("");
@@ -493,6 +618,18 @@ export function App() {
       setError(e instanceof Error ? e.message : "Could not load Plant Care.");
     }
   }, []);
+  const loadDashboardDate = async (day: string) => {
+    if (actualToday.current && day > actualToday.current) return;
+    try {
+      const next = await api.dashboard(day);
+      viewedDate.current = next.server_date;
+      setDashboardDate(next.server_date);
+      setDashboard(next);
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load this date.");
+    }
+  };
   useEffect(() => {
     void reload();
   }, [reload]);
@@ -524,6 +661,7 @@ export function App() {
     try {
       const result = (await api.adHocCheck(plant.id, {
         outcome: "watered",
+        care_date: dashboardDate || undefined,
       })) as { id: number };
       setSnack({
         text: `${plant.display_name} marked watered.`,
@@ -581,7 +719,8 @@ export function App() {
   const returnToToday = async () => {
     setDetail(null);
     setPage("home");
-    await reload();
+    if (actualToday.current) await loadDashboardDate(actualToday.current);
+    else await reload();
   };
   const updatePlant = async (data: Record<string, unknown>) => {
     if (!detail) return;
@@ -605,12 +744,21 @@ export function App() {
           : page === "settings"
             ? "Settings"
             : "Add plant";
-  const serverDate =
-    dashboard?.server_date || new Date().toISOString().slice(0, 10);
+  const serverDate = dashboardDate || dashboard?.server_date || new Date().toISOString().slice(0, 10);
+  const dateTitle =
+    serverDate === actualToday.current
+      ? "Today"
+      : actualToday.current && serverDate === dateAfter(actualToday.current, -1)
+        ? "Yesterday"
+      : new Date(`${serverDate}T12:00:00`).toLocaleDateString(undefined, {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+        });
   return (
     <main className="app-shell">
-      <header>
-        <div>
+      <header className={page === "home" ? "home-header" : undefined}>
+        <div className="home-brand">
           <button
             type="button"
             className="eyebrow brand-link"
@@ -619,8 +767,38 @@ export function App() {
           >
             <Sprout size={16} /> Plant Care
           </button>
-          <h1>{title}</h1>
+          {page !== "home" && <h1>{title}</h1>}
         </div>
+        {page === "home" && (
+          <div className="home-date-control">
+            <button
+              type="button"
+              className="date-step"
+              aria-label="Previous day"
+              onClick={() => void loadDashboardDate(dateAfter(serverDate, -1))}
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              className="date-title"
+              aria-label={`Choose date, ${dateTitle}`}
+              onClick={() => setCalendarOpen(true)}
+            >
+              <h1>{dateTitle}</h1>
+            </button>
+            {serverDate < (actualToday.current || serverDate) && (
+              <button
+                type="button"
+                className="date-step"
+                aria-label="Next day"
+                onClick={() => void loadDashboardDate(dateAfter(serverDate, 1))}
+              >
+                ›
+              </button>
+            )}
+          </div>
+        )}
         {page === "home" && (
           <button
             className="icon-button"
@@ -759,6 +937,17 @@ export function App() {
           onClose={() => setSnoozePlant(null)}
         />
       )}
+      {calendarOpen && (
+        <CalendarDialog
+          selectedDate={serverDate}
+          maxDate={actualToday.current || serverDate}
+          onSelect={(day) => {
+            void loadDashboardDate(day);
+            setCalendarOpen(false);
+          }}
+          onClose={() => setCalendarOpen(false)}
+        />
+      )}
     </main>
   );
 }
@@ -863,6 +1052,14 @@ function PlantDetailView({
         <div className="detail-controls">
           <button
             className="icon-button"
+            aria-label="Plant notebook"
+            aria-pressed={mode === "journal"}
+            onClick={() => setMode((current) => current === "journal" ? "view" : "journal")}
+          >
+            <NotebookPen size={19} />
+          </button>
+          <button
+            className="icon-button"
             aria-label="Edit plant"
             onClick={() => setMode("edit")}
           >
@@ -879,6 +1076,16 @@ function PlantDetailView({
             </button>
             {menuOpen && (
               <div className="kebab-menu" role="menu">
+                <button
+                  role="menuitem"
+                  className="menu-item"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onArchive();
+                  }}
+                >
+                  Archive plant
+                </button>
                 <button
                   role="menuitem"
                   className="delete-menu-item"
@@ -905,10 +1112,6 @@ function PlantDetailView({
         </button>
       </div>
       <div className="quick-tools">
-        <button onClick={() => setMode("journal")}>
-          <BookOpen />
-          Journal
-        </button>
         <button onClick={() => setMode("photo")}>
           <Upload />
           Photo
@@ -924,42 +1127,56 @@ function PlantDetailView({
             <h3>Care instructions</h3>
             <p>{detail.care_note}</p>
           </div>
-          <button
-            className="icon-button"
-            aria-label="Archive plant"
-            onClick={onArchive}
-          >
-            <Archive size={17} />
-          </button>
         </section>
       )}
       {mode === "journal" && (
-        <form
-          className="inline-form"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            await api.journal(detail.id, { care_date: date, body });
-            setBody("");
-            setMode("view");
-            onRefresh();
-          }}
-        >
-          <label>
-            Date
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
+        <section className="notebook">
+          <h3 className="section-title">Plant notebook</h3>
+          <section className="timeline notebook-entries">
+            {detail.timeline.filter((event) => event.type === "journal").length ? (
+              detail.timeline
+                .filter((event) => event.type === "journal")
+                .map((event) => (
+                  <article className="timeline-event" key={`notebook-${event.id}`}>
+                    <span className="event-date">
+                      {String(event.care_date || event.created_at).slice(0, 10)}
+                    </span>
+                    <div>
+                      <strong>Note</strong>
+                      {typeof event.body === "string" && <p>{event.body}</p>}
+                    </div>
+                  </article>
+                ))
+            ) : (
+              <p className="muted">No notes yet. Add the first one below.</p>
+            )}
+          </section>
+          <form
+            className="inline-form"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              await api.journal(detail.id, { care_date: date, body });
+              setBody("");
+              onRefresh();
+            }}
+          >
+            <label>
+              Date
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+              />
+            </label>
+            <textarea
+              required
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="Write a note about this plant"
             />
-          </label>
-          <textarea
-            required
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            placeholder="What changed?"
-          />
-          <button className="water">Save journal entry</button>
-        </form>
+            <button className="water">Add note</button>
+          </form>
+        </section>
       )}
       {mode === "photo" && (
         <form
@@ -1025,8 +1242,8 @@ function PlantDetailView({
       <h3 className="section-title">History</h3>
       {historyError && <p className="history-error">{historyError}</p>}
       <section className="timeline">
-        {detail.timeline.length ? (
-          detail.timeline.map((event) => (
+        {detail.timeline.filter((event) => event.type !== "journal").length ? (
+          detail.timeline.filter((event) => event.type !== "journal").map((event) => (
             <div className="timeline-event" key={`${event.type}-${event.id}`}>
               <span className="event-date">
                 {String(event.care_date || event.created_at).slice(0, 10)}

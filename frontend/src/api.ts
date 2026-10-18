@@ -67,7 +67,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  dashboard: () => request<Dashboard>("/api/dashboard"),
+  dashboard: (day?: string) =>
+    request<Dashboard>(`/api/dashboard${day ? `?day=${encodeURIComponent(day)}` : ""}`),
   plants: (archived = false) =>
     request<Plant[]>(`/api/plants${archived ? "?include_archived=true" : ""}`),
   plant: (id: number) => request<PlantDetail>(`/api/plants/${id}`),
