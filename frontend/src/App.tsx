@@ -20,11 +20,14 @@ import {
   BookOpen,
   Download,
   Droplets,
+  FileImage,
   Flower2,
   GripVertical,
+  Images,
   Leaf,
   MoreVertical,
   NotebookPen,
+  NotebookText,
   Pencil,
   Plus,
   Sprout,
@@ -172,6 +175,15 @@ function wateringEventDate(event: TimelineEvent) {
   return String(event.care_date || event.created_at).slice(0, 10);
 }
 
+function formatCareDate(day: string) {
+  const [year, month, date] = day.split("-").map(Number);
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(year, month - 1, date));
+}
+
 function WateringCalendar({
   events,
   selectedDate,
@@ -298,10 +310,10 @@ function Avatar({ plant, large = false }: { plant: Plant; large?: boolean }) {
     .slice(0, 2)
     .toUpperCase();
   const hue = ((plant.id * 47) % 180) + 70;
-  return plant.cover_photo_id ? (
+  return plant.profile_photo_id ? (
     <img
       className={`avatar ${large ? "large" : ""}`}
-      src={`/api/photos/${plant.cover_photo_id}?thumbnail=true`}
+      src={`/api/plants/${plant.id}/profile-photo?thumbnail=true`}
       alt=""
     />
   ) : (
@@ -318,17 +330,38 @@ function Avatar({ plant, large = false }: { plant: Plant; large?: boolean }) {
 function PlantCard({
   plant,
   position,
+  activeDate,
   onWater,
+  onUndo,
   onSnooze,
   onOpen,
+  onOpenNote,
+  onAddPhoto,
 }: {
   plant: Plant;
   position: number;
-  onWater: (plant: Plant) => void;
+  activeDate: string;
+  onWater: (plant: Plant) => Promise<void>;
+  onUndo: (plant: Plant, checkId: number) => Promise<void>;
   onSnooze: (plant: Plant) => void;
   onOpen: () => void;
+  onOpenNote: (plant: Plant, date: string) => void;
+  onAddPhoto: (plant: Plant, date: string, file: File) => Promise<void>;
 }) {
   const sortable = useSortable({ id: plant.id });
+  const photoInput = useRef<HTMLInputElement>(null);
+  const [pending, setPending] = useState(false);
+  const [photoPending, setPhotoPending] = useState(false);
+  const handleWater = async () => {
+    setPending(true);
+    try {
+      if (plant.day_watered_check_id)
+        await onUndo(plant, plant.day_watered_check_id);
+      else await onWater(plant);
+    } finally {
+      setPending(false);
+    }
+  };
   return (
     <article
       ref={sortable.setNodeRef}
@@ -346,25 +379,68 @@ function PlantCard({
       >
         <GripVertical size={20} />
       </button>
-      <button
-        className="card-main"
-        onClick={onOpen}
-        aria-label={`Open ${plant.display_name}`}
-      >
-        <Avatar plant={plant} />
-        <span className="card-copy">
-          <span className="card-title">
-            <span className="card-position" aria-label={`Position ${position}`}>
-              {String(position).padStart(2, "0")}
+      <div className="card-heading">
+        <button
+          className="card-main"
+          onClick={onOpen}
+          aria-label={`Open ${plant.display_name}`}
+        >
+          <Avatar plant={plant} />
+          <span className="card-copy">
+            <span className="card-title">
+              <span className="card-position" aria-label={`Position ${position}`}>
+                {String(position).padStart(2, "0")}
+              </span>
+              <span className="card-title-name">{plant.display_name}</span>
             </span>
-            <span className="card-title-name">{plant.display_name}</span>
+            <span className="species">
+              {plant.species}
+              {plant.location ? ` · ${plant.location}` : ""}
+            </span>
           </span>
-          <span className="species">
-            {plant.species}
-            {plant.location ? ` · ${plant.location}` : ""}
-          </span>
-        </span>
-      </button>
+        </button>
+        <div className="card-day-actions">
+          <input
+            ref={photoInput}
+            hidden
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/heic"
+            capture="environment"
+            aria-label={`Choose a photo for ${plant.display_name} on ${activeDate}`}
+            onChange={async (event) => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              setPhotoPending(true);
+              try {
+                await onAddPhoto(plant, activeDate, file);
+              } finally {
+                setPhotoPending(false);
+                event.target.value = "";
+              }
+            }}
+          />
+          <button
+            type="button"
+            className={`day-action${plant.day_photo_count ? " active" : ""}`}
+            aria-label={`Add photo for ${plant.display_name} on ${activeDate}${plant.day_photo_count ? `; ${plant.day_photo_count} saved` : ""}`}
+            title={plant.day_photo_count ? `${plant.day_photo_count} photos saved` : "Add photo"}
+            disabled={photoPending}
+            onClick={() => photoInput.current?.click()}
+          >
+            <FileImage size={19} />
+          </button>
+          <button
+            type="button"
+            className={`day-action${plant.day_note_id ? " active" : ""}`}
+            aria-label={`${plant.day_note_id ? "Edit" : "Add"} note for ${plant.display_name} on ${activeDate}`}
+            aria-pressed={Boolean(plant.day_note_id)}
+            title={plant.day_note_id ? "Edit this day’s note" : "Add a note"}
+            onClick={() => onOpenNote(plant, activeDate)}
+          >
+            <NotebookText size={19} />
+          </button>
+        </div>
+      </div>
       <div className="water-summary">
         <span>Last watered</span>
         <strong>{lastWateredLabel(plant)}</strong>
@@ -383,8 +459,8 @@ function PlantCard({
               Snooze
             </button>
           )}
-          <button className="water" onClick={() => onWater(plant)}>
-            <Droplets size={16} /> Watered
+          <button className={plant.day_watered_check_id ? "secondary" : "water"} disabled={pending} onClick={() => void handleWater()}>
+            <Droplets size={16} /> {plant.day_watered_check_id ? "Undo" : "Watered"}
           </button>
         </div>
       </div>
@@ -392,17 +468,123 @@ function PlantCard({
   );
 }
 
+function DayNoteEditor({
+  plant,
+  date,
+  onClose,
+  onSaved,
+}: {
+  plant: Plant;
+  date: string;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [entry, setEntry] = useState<{ id: number; body: string } | null>(null);
+  const [body, setBody] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const initialBody = useRef("");
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    api.journalForDay(plant.id, date)
+      .then((note) => {
+        if (!active) return;
+        setEntry(note);
+        setBody(note?.body || "");
+        initialBody.current = note?.body || "";
+      })
+      .catch((error) => setError(error instanceof Error ? error.message : "Could not load this note."))
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [plant.id, date]);
+
+  const close = () => {
+    if (body !== initialBody.current && !confirm("Discard your unsaved note changes?")) return;
+    onClose();
+  };
+  const save = async () => {
+    if (!body.trim() || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await api.journal(plant.id, { care_date: date, body });
+      await onSaved();
+      onClose();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not save this note.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const remove = async () => {
+    if (!entry || !confirm(`Delete ${formatCareDate(date)}’s note?`)) return;
+    setSaving(true);
+    setError("");
+    try {
+      await api.deleteJournal(entry.id);
+      await onSaved();
+      onClose();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not delete this note.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="note-editor-backdrop" role="presentation" tabIndex={-1} onKeyDown={(event) => { if (event.key === "Escape") close(); }} onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+      <section className="note-editor" role="dialog" aria-modal="true" aria-labelledby="note-editor-title">
+        <header className="note-editor-header">
+          <button type="button" className="note-editor-close" onClick={close}>Close</button>
+          <button type="button" className="note-editor-save" disabled={loading || saving || !body.trim() || body === initialBody.current} onClick={() => void save()}>
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </header>
+        <div className="note-editor-content">
+          <h2 id="note-editor-title">{plant.display_name}</h2>
+          <time dateTime={date}>{formatCareDate(date)}</time>
+          <textarea
+            autoFocus
+            aria-label={`Note for ${plant.display_name} on ${date}`}
+            maxLength={20000}
+            value={body}
+            disabled={loading || saving}
+            onChange={(event) => setBody(event.target.value)}
+            placeholder="Add a note for this day…"
+          />
+          {error && <p role="alert" className="note-editor-error">{error}</p>}
+          <div className="note-editor-footer">
+            <span aria-live="polite">{body.length.toLocaleString()} / 20,000</span>
+            {entry && <button type="button" className="delete-menu-item" disabled={saving} onClick={() => void remove()}>Delete note</button>}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function PlantList({
   plants,
+  activeDate,
   onWater,
+  onUndo,
   onSnooze,
   onOpen,
+  onOpenNote,
+  onAddPhoto,
   onReorder,
 }: {
   plants: Plant[];
-  onWater: (plant: Plant) => void;
+  activeDate: string;
+  onWater: (plant: Plant) => Promise<void>;
+  onUndo: (plant: Plant, checkId: number) => Promise<void>;
   onSnooze: (plant: Plant) => void;
   onOpen: (id: number) => void;
+  onOpenNote: (plant: Plant, date: string) => void;
+  onAddPhoto: (plant: Plant, date: string, file: File) => Promise<void>;
   onReorder: (ids: number[]) => void;
 }) {
   const sensors = useSensors(
@@ -435,9 +617,13 @@ function PlantList({
               key={plant.id}
               plant={plant}
               position={index + 1}
+              activeDate={activeDate}
               onWater={onWater}
+              onUndo={onUndo}
               onSnooze={onSnooze}
               onOpen={() => onOpen(plant.id)}
+              onOpenNote={onOpenNote}
+              onAddPhoto={onAddPhoto}
             />
           ))}
         </section>
@@ -499,27 +685,25 @@ function PlantForm({
         <input value={location} onChange={(e) => setLocation(e.target.value)} />
       </label>
       {!initial && (
-        <>
-          <label>
-            Last watered <span className="optional">optional</span>
-            <input
-              type="date"
-              value={lastWatered}
-              onChange={(e) => setLastWatered(e.target.value)}
-            />
-          </label>
-          <label>
-            Photo <span className="optional">optional</span>
-            <input
-              aria-label="Plant photo"
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/heic"
-              capture="environment"
-              onChange={(event) => setPhoto(event.target.files?.[0] || null)}
-            />
-          </label>
-        </>
+        <label>
+          Last watered <span className="optional">optional</span>
+          <input
+            type="date"
+            value={lastWatered}
+            onChange={(e) => setLastWatered(e.target.value)}
+          />
+        </label>
       )}
+      <label>
+        Profile photo <span className="optional">optional</span>
+        <input
+          aria-label="Plant profile photo"
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/heic"
+          capture="environment"
+          onChange={(event) => setPhoto(event.target.files?.[0] || null)}
+        />
+      </label>
       <label>
         Care instructions <span className="optional">permanent note</span>
         <textarea
@@ -698,9 +882,7 @@ export function App() {
   const [fertilizers, setFertilizers] = useState<Fertilizer[]>([]);
   const [error, setError] = useState("");
   const [offline, setOffline] = useState(!navigator.onLine);
-  const [snack, setSnack] = useState<{ text: string; checkId: number } | null>(
-    null,
-  );
+  const [noteTarget, setNoteTarget] = useState<{ plant: Plant; date: string } | null>(null);
   const pwaInstall = usePwaInstall();
   const [snoozePlant, setSnoozePlant] = useState<Plant | null>(null);
   const [dashboardDate, setDashboardDate] = useState<string | null>(null);
@@ -748,11 +930,6 @@ export function App() {
       removeEventListener("offline", offline);
     };
   }, []);
-  useEffect(() => {
-    if (!snack) return;
-    const timer = window.setTimeout(() => setSnack(null), 8000);
-    return () => clearTimeout(timer);
-  }, [snack]);
   const openPlant = async (id: number) => {
     try {
       setDetail(await api.plant(id));
@@ -764,18 +941,34 @@ export function App() {
   const saveWatering = async (plant: Plant) => {
     if (offline) return;
     try {
-      const result = (await api.adHocCheck(plant.id, {
+      await api.adHocCheck(plant.id, {
         outcome: "watered",
         care_date: dashboardDate || undefined,
-      })) as { id: number };
-      setSnack({
-        text: `${plant.display_name} marked watered.`,
-        checkId: result.id,
       });
       await reload();
       if (detail?.id === plant.id) await openPlant(plant.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not record watering.");
+    }
+  };
+  const undoWatering = async (plant: Plant, checkId: number) => {
+    if (offline) return;
+    try {
+      await api.deleteCheck(checkId);
+      await reload();
+      if (detail?.id === plant.id) await openPlant(plant.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not undo watering.");
+    }
+  };
+  const addDayPhoto = async (plant: Plant, date: string, file: File) => {
+    if (offline) return;
+    try {
+      await api.uploadPhoto(plant.id, file, date);
+      await reload();
+      if (detail?.id === plant.id) await openPlant(plant.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not add this photo.");
     }
   };
   const saveSnooze = async (plant: Plant, untilDate: string) => {
@@ -811,10 +1004,7 @@ export function App() {
   ) => {
     try {
       const plant = await api.createPlant(data);
-      if (photo) {
-        const uploaded = await api.uploadPhoto(plant.id, photo);
-        await api.setCover(uploaded.id);
-      }
+      if (photo) await api.uploadProfilePhoto(plant.id, photo);
       await reload();
       setPage("home");
     } catch (e) {
@@ -827,12 +1017,13 @@ export function App() {
     if (actualToday.current) await loadDashboardDate(actualToday.current);
     else await reload();
   };
-  const updatePlant = async (data: Record<string, unknown>) => {
+  const updatePlant = async (data: Record<string, unknown>, photo: File | null) => {
     if (!detail) return;
     try {
       const plantData = { ...data };
       delete plantData.initial_last_watered;
       await api.updatePlant(detail.id, plantData);
+      if (photo) await api.uploadProfilePhoto(detail.id, photo);
       await reload();
       await openPlant(detail.id);
     } catch (e) {
@@ -934,9 +1125,13 @@ export function App() {
               {dashboard.plants.length ? (
                 <PlantList
                   plants={dashboard.plants}
-                  onWater={(plant) => void saveWatering(plant)}
+                  activeDate={serverDate}
+                  onWater={saveWatering}
+                  onUndo={undoWatering}
                   onSnooze={setSnoozePlant}
                   onOpen={(id) => void openPlant(id)}
+                  onOpenNote={(plant, date) => setNoteTarget({ plant, date })}
+                  onAddPhoto={addDayPhoto}
                   onReorder={(ids) => void reorder(ids)}
                 />
               ) : (
@@ -956,11 +1151,16 @@ export function App() {
       {page === "detail" && detail && (
         <PlantDetailView
           detail={detail}
+          activeDate={serverDate}
+          dayWateredCheckId={
+            dashboard?.plants.find((plant) => plant.id === detail.id)?.day_watered_check_id ?? null
+          }
           fertilizers={fertilizers}
           onBack={() => void returnToToday()}
           onRefresh={() => void openPlant(detail.id)}
           onUpdate={updatePlant}
-          onWater={(plant) => void saveWatering(plant)}
+          onWater={saveWatering}
+          onUndo={undoWatering}
           onSnooze={setSnoozePlant}
           onArchive={async () => {
             if (confirm(`Archive ${detail.display_name}?`)) {
@@ -1009,19 +1209,16 @@ export function App() {
           </button>
         </nav>
       )}
-      {snack && (
-        <div className="snack">
-          {snack.text}
-          <button
-            onClick={async () => {
-              await api.deleteCheck(snack.checkId);
-              setSnack(null);
-              await reload();
-            }}
-          >
-            Undo
-          </button>
-        </div>
+      {noteTarget && (
+        <DayNoteEditor
+          plant={noteTarget.plant}
+          date={noteTarget.date}
+          onClose={() => setNoteTarget(null)}
+          onSaved={async () => {
+            await reload();
+            if (detail?.id === noteTarget.plant.id) await openPlant(noteTarget.plant.id);
+          }}
+        />
       )}
       {snoozePlant && (
         <SnoozeSheet
@@ -1070,32 +1267,37 @@ function Loading() {
 
 function PlantDetailView({
   detail,
+  activeDate,
+  dayWateredCheckId,
   fertilizers,
   onBack,
   onRefresh,
   onUpdate,
   onWater,
+  onUndo,
   onSnooze,
   onArchive,
   onDelete,
 }: {
   detail: PlantDetail;
+  activeDate: string;
+  dayWateredCheckId: number | null;
   fertilizers: Fertilizer[];
   onBack: () => void;
   onRefresh: () => void;
-  onUpdate: (data: Record<string, unknown>) => Promise<void>;
-  onWater: (plant: Plant) => void;
+  onUpdate: (data: Record<string, unknown>, photo: File | null) => Promise<void>;
+  onWater: (plant: Plant) => Promise<void>;
+  onUndo: (plant: Plant, checkId: number) => Promise<void>;
   onSnooze: (plant: Plant) => void;
   onArchive: () => void;
   onDelete: () => Promise<void>;
 }) {
   const [mode, setMode] = useState<
-    "view" | "edit" | "journal" | "photo" | "fertilizer"
+    "view" | "edit" | "journal" | "photos" | "fertilizer"
   >("view");
-  const [body, setBody] = useState("");
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [file, setFile] = useState<File | null>(null);
+  const [date, setDate] = useState(activeDate);
   const [product, setProduct] = useState("");
+  const [previewPhoto, setPreviewPhoto] = useState<TimelineEvent | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [editingWatering, setEditingWatering] = useState<{
@@ -1104,6 +1306,7 @@ function PlantDetailView({
   } | null>(null);
   const [historyError, setHistoryError] = useState("");
   const [addingWatering, setAddingWatering] = useState(false);
+  const [carePending, setCarePending] = useState(false);
   const [selectedWateringDate, setSelectedWateringDate] = useState<string | null>(null);
   const wateringEvents = detail.timeline.filter(
     (event) => event.type === "watering" || (event.type === "check" && event.outcome === "watered"),
@@ -1111,6 +1314,24 @@ function PlantDetailView({
   const selectedWateringEvents = wateringEvents.filter(
     (event) => wateringEventDate(event) === selectedWateringDate,
   );
+  const photoGroups = Array.from(
+    detail.timeline
+      .filter((event) => event.type === "photo")
+      .reduce((groups, event) => {
+        const day = wateringEventDate(event);
+        groups.set(day, [...(groups.get(day) || []), event]);
+        return groups;
+      }, new Map<string, TimelineEvent[]>()),
+  );
+  const handleCareAction = async () => {
+    setCarePending(true);
+    try {
+      if (dayWateredCheckId) await onUndo(detail, dayWateredCheckId);
+      else await onWater(detail);
+    } finally {
+      setCarePending(false);
+    }
+  };
   if (mode === "edit")
     return (
       <section className="page panel">
@@ -1119,8 +1340,8 @@ function PlantDetailView({
         </button>
         <PlantForm
           initial={detail}
-          onSave={async (data) => {
-            await onUpdate(data);
+          onSave={async (data, photo) => {
+            await onUpdate(data, photo);
             setMode("view");
           }}
           onCancel={() => setMode("view")}
@@ -1161,6 +1382,14 @@ function PlantDetailView({
             onClick={() => setMode((current) => current === "journal" ? "view" : "journal")}
           >
             <NotebookPen size={19} />
+          </button>
+          <button
+            className="icon-button"
+            aria-label="Plant photos"
+            aria-pressed={mode === "photos"}
+            onClick={() => setMode((current) => current === "photos" ? "view" : "photos")}
+          >
+            <Images size={19} />
           </button>
           <button
             className="icon-button"
@@ -1211,15 +1440,15 @@ function PlantDetailView({
             Snooze
           </button>
         )}
-        <button className="water" onClick={() => onWater(detail)}>
-          <Droplets size={16} /> Watered
+        <button
+          className={dayWateredCheckId ? "secondary" : "water"}
+          disabled={carePending}
+          onClick={() => void handleCareAction()}
+        >
+          <Droplets size={16} /> {dayWateredCheckId ? "Undo" : "Watered"}
         </button>
       </div>
       <div className="quick-tools">
-        <button onClick={() => setMode("photo")}>
-          <Upload />
-          Photo
-        </button>
         <button onClick={() => setMode("fertilizer")}>
           <Flower2 />
           Fertilizer
@@ -1252,58 +1481,38 @@ function PlantDetailView({
                   </article>
                 ))
             ) : (
-              <p className="muted">No notes yet. Add the first one below.</p>
+              <p className="muted">No notes yet. Add one from a plant card for a selected date.</p>
             )}
           </section>
-          <form
-            className="inline-form"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              await api.journal(detail.id, { care_date: date, body });
-              setBody("");
-              onRefresh();
-            }}
-          >
-            <label>
-              Date
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-              />
-            </label>
-            <textarea
-              required
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              placeholder="Write a note about this plant"
-            />
-            <button className="water">Add note</button>
-          </form>
         </section>
       )}
-      {mode === "photo" && (
-        <form
-          className="inline-form"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (file) {
-              const photo = await api.uploadPhoto(detail.id, file);
-              if (!detail.cover_photo_id) await api.setCover(photo.id);
-              setMode("view");
-              onRefresh();
-            }
-          }}
-        >
-          <input
-            required
-            type="file"
-            accept="image/jpeg,image/png,image/webp,image/heic"
-            capture="environment"
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
-          />
-          <button className="water">Upload photo</button>
-        </form>
+      {mode === "photos" && (
+        <section className="photo-history">
+          <h3 className="section-title">Plant photos</h3>
+          {photoGroups.length ? (
+            <div className="photo-history-groups">
+              {photoGroups.map(([day, events]) => (
+                <section className="photo-day-group" key={day}>
+                  <h4>{formatCareDate(day)}</h4>
+                  <div className="photo-grid">
+                    {events.map((event) => (
+                      <button
+                        className="photo-history-item"
+                        key={`photo-${event.id}`}
+                        aria-label={`View photo from ${formatCareDate(day)}`}
+                        onClick={() => setPreviewPhoto(event)}
+                      >
+                        <img src={`/api/photos/${event.id}?thumbnail=true`} alt={String(event.caption || "Plant progress photo")} />
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">No photos yet. Add one from a plant card for a selected date.</p>
+          )}
+        </section>
       )}
       {mode === "fertilizer" && (
         <form
@@ -1478,6 +1687,15 @@ function PlantDetailView({
           onDelete={onDelete}
           onClose={() => setShowDelete(false)}
         />
+      )}
+      {previewPhoto && (
+        <div className="photo-preview-backdrop" role="presentation" onClick={() => setPreviewPhoto(null)}>
+          <section className="photo-preview" role="dialog" aria-modal="true" aria-label="Plant photo" onClick={(event) => event.stopPropagation()}>
+            <button className="icon-button" aria-label="Close photo" onClick={() => setPreviewPhoto(null)}><X /></button>
+            <img src={`/api/photos/${previewPhoto.id}`} alt={String(previewPhoto.caption || "Plant progress photo")} />
+            <time dateTime={wateringEventDate(previewPhoto)}>{formatCareDate(wateringEventDate(previewPhoto))}</time>
+          </section>
+        </div>
       )}
     </section>
   );

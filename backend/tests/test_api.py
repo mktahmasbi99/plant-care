@@ -213,6 +213,122 @@ def test_order_is_persisted_and_requires_every_active_plant(tmp_path, monkeypatc
     assert client.put("/api/plants/order", json={"plant_ids": [first["id"]]}).status_code == 409
 
 
+def test_journal_upserts_one_note_per_plant_day(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    plant = make_plant(client)
+    first = client.post(
+        f"/api/plants/{plant['id']}/journal",
+        json={"care_date": "2026-10-20", "body": "First draft"},
+    ).json()
+    updated = client.post(
+        f"/api/plants/{plant['id']}/journal",
+        json={"care_date": "2026-10-20", "body": "Revised note"},
+    ).json()
+
+    assert updated["id"] == first["id"]
+    assert client.get(f"/api/plants/{plant['id']}/journal/2026-10-20").json()["body"] == "Revised note"
+    assert client.get(f"/api/plants/{plant['id']}/journal/2026-10-21").json() is None
+    assert client.post(
+        f"/api/plants/{plant['id']}/journal",
+        json={"care_date": "2026-10-21", "body": "Another day"},
+    ).status_code == 201
+    assert len(client.get(f"/api/plants/{plant['id']}/journal").json()) == 2
+    assert client.get("/api/dashboard?day=2026-10-20").json()["plants"][0]["day_note_id"] == first["id"]
+
+
+def test_watering_action_is_idempotent_and_exposed_for_the_selected_day(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    plant = make_plant(client)
+    path = f"/api/plants/{plant['id']}/checks"
+    data = {"outcome": "watered", "care_date": "2026-10-20"}
+    first = client.post(path, json=data).json()
+    repeated = client.post(path, json=data).json()
+
+    assert repeated["id"] == first["id"]
+    with sqlite3.connect(tmp_path / "plant-care.sqlite3") as db:
+        assert db.execute("SELECT COUNT(*) FROM plant_checks WHERE plant_id=?", (plant["id"],)).fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM watering_events WHERE plant_id=?", (plant["id"],)).fetchone()[0] == 1
+    dashboard = client.get("/api/dashboard?day=2026-10-20").json()["plants"][0]
+    assert dashboard["day_watered_check_id"] == first["id"]
+
+    assert client.delete(f"/api/checks/{first['id']}").status_code == 204
+    assert client.get("/api/dashboard?day=2026-10-20").json()["plants"][0]["day_watered_check_id"] is None
+
+
+def test_photos_are_date_specific_and_profile_photo_is_separate(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    plant = make_plant(client)
+    source = io.BytesIO()
+    Image.new("RGB", (80, 60), (40, 140, 70)).save(source, format="PNG")
+    photo_bytes = source.getvalue()
+    for caption in ("First progress photo", "Second progress photo"):
+        response = client.post(
+            f"/api/plants/{plant['id']}/photos",
+            data={"care_date": "2026-10-20", "caption": caption},
+            files={"file": ("leaf.png", photo_bytes, "image/png")},
+        )
+        assert response.status_code == 201
+
+    assert client.get("/api/dashboard?day=2026-10-20").json()["plants"][0]["day_photo_count"] == 2
+    assert client.get("/api/dashboard?day=2026-10-21").json()["plants"][0]["day_photo_count"] == 0
+    detail = client.get(f"/api/plants/{plant['id']}").json()
+    photos = [event for event in detail["timeline"] if event["type"] == "photo"]
+    assert {photo["care_date"] for photo in photos} == {"2026-10-20"}
+
+    profile = client.put(
+        f"/api/plants/{plant['id']}/profile-photo",
+        files={"file": ("profile.png", photo_bytes, "image/png")},
+    )
+    assert profile.status_code == 200
+    assert client.get(f"/api/plants/{plant['id']}").json()["profile_photo_id"] == profile.json()["id"]
+    assert client.get(f"/api/plants/{plant['id']}/profile-photo?thumbnail=true").headers["content-type"] == "image/jpeg"
+    assert client.get("/api/dashboard?day=2026-10-20").json()["plants"][0]["day_photo_count"] == 2
+
+
+def test_v4_migration_dates_photos_merges_notes_and_copies_existing_cover(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    plant = make_plant(client)
+    path = tmp_path / "plant-care.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute("DROP INDEX photos_by_plant_date")
+        db.execute("DROP INDEX one_journal_entry_per_plant_day")
+        db.execute("DROP TABLE plant_profile_photos")
+        db.execute("ALTER TABLE photos DROP COLUMN care_date")
+        first = db.execute(
+            """INSERT INTO journal_entries(plant_id,care_date,body,created_at,updated_at)
+               VALUES (?, '2026-10-20', 'Morning note', '2026-10-20T08:00:00+02:00', '2026-10-20T08:00:00+02:00')""",
+            (plant["id"],),
+        ).lastrowid
+        second = db.execute(
+            """INSERT INTO journal_entries(plant_id,care_date,body,created_at,updated_at)
+               VALUES (?, '2026-10-20', 'Evening note', '2026-10-20T19:00:00+02:00', '2026-10-20T19:00:00+02:00')""",
+            (plant["id"],),
+        ).lastrowid
+        for note_id, is_cover, created_at in (
+            (first, 1, "2026-10-20T09:00:00+02:00"),
+            (second, 0, "2026-10-20T20:00:00+02:00"),
+        ):
+            db.execute(
+                """INSERT INTO photos
+                   (plant_id,journal_entry_id,caption,image,thumbnail,width,height,is_cover,created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (plant["id"], note_id, "Demo", b"full", b"thumb", 10, 10, is_cover, created_at),
+            )
+        db.execute("UPDATE app_metadata SET value='4' WHERE key='schema_version'")
+
+    initialize(path)
+    with sqlite3.connect(path) as db:
+        db.row_factory = sqlite3.Row
+        note = db.execute("SELECT * FROM journal_entries WHERE plant_id=?", (plant["id"],)).fetchone()
+        photos = db.execute("SELECT * FROM photos WHERE plant_id=? ORDER BY id", (plant["id"],)).fetchall()
+        profile = db.execute("SELECT * FROM plant_profile_photos WHERE plant_id=?", (plant["id"],)).fetchone()
+        assert note["body"] == "Morning note\n\nEvening note"
+        assert [photo["care_date"] for photo in photos] == ["2026-10-20", "2026-10-20"]
+        assert [photo["journal_entry_id"] for photo in photos] == [note["id"], note["id"]]
+        assert profile["image"] == b"full" and profile["thumbnail"] == b"thumb"
+        assert db.execute("PRAGMA foreign_key_check").fetchone() is None
+
+
 def test_delete_is_irreversible_and_requires_typed_confirmation(tmp_path, monkeypatch):
     client = client_for(tmp_path, monkeypatch)
     plant = make_plant(client)

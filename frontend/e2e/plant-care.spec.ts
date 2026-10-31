@@ -66,3 +66,62 @@ test('adds a pot and snoozes its learned watering signal', async ({ page }) => {
   await page.getByRole('button', { name: 'In 2 days', exact: true }).click()
   await expect(card.getByText(/Snoozed until/)).toBeVisible()
 })
+
+test('keeps notes, photos, and watering actions tied to the selected day', async ({ page }) => {
+  await page.goto('/')
+  const dashboard = await (await page.request.get('/api/dashboard')).json()
+  const activeDate = dashboard.server_date as string
+  const nickname = `Daily records ${Date.now()}`
+  const created = await page.request.post('/api/plants', {
+    data: { species: 'Monstera deliciosa', nickname },
+  })
+  expect(created.ok()).toBeTruthy()
+  await page.reload()
+
+  const card = page.locator('article.plant-card').filter({
+    has: page.getByRole('button', { name: `Open ${nickname}` }),
+  })
+  await card.getByRole('button', { name: `Add note for ${nickname} on ${activeDate}` }).click()
+  const editor = page.getByRole('dialog', { name: nickname })
+  const note = editor.getByRole('textbox', { name: `Note for ${nickname} on ${activeDate}` })
+  await expect(note).toBeVisible()
+  await expect(editor.locator('input[type="date"]')).toHaveCount(0)
+  await note.fill('A note for the selected day.')
+  await editor.getByRole('button', { name: 'Save' }).click()
+  await expect(card.getByRole('button', { name: `Edit note for ${nickname} on ${activeDate}` })).toHaveAttribute('aria-pressed', 'true')
+
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p6kAAAAASUVORK5CYII=',
+    'base64',
+  )
+  const photoInput = card.locator('input[type="file"]')
+  await photoInput.setInputFiles({ name: 'leaf.png', mimeType: 'image/png', buffer: png })
+  await expect(card.getByRole('button', { name: `Add photo for ${nickname} on ${activeDate}; 1 saved` })).toBeVisible()
+  await photoInput.setInputFiles({ name: 'leaf-again.png', mimeType: 'image/png', buffer: png })
+  await expect(card.getByRole('button', { name: `Add photo for ${nickname} on ${activeDate}; 2 saved` })).toBeVisible()
+
+  await card.getByRole('button', { name: 'Watered' }).click()
+  await expect(card.getByRole('button', { name: 'Undo' })).toBeVisible()
+  await card.getByRole('button', { name: 'Undo' }).click()
+  await expect(card.getByRole('button', { name: 'Watered' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Previous day' }).click()
+  const previousDate = await (await page.request.get('/api/config')).json().then((config) => {
+    const date = new Date(`${config.today}T12:00:00Z`)
+    date.setUTCDate(date.getUTCDate() - 1)
+    return date.toISOString().slice(0, 10)
+  })
+  await expect(card.getByRole('button', { name: `Add note for ${nickname} on ${previousDate}` })).toBeVisible()
+  await card.getByRole('button', { name: `Add note for ${nickname} on ${previousDate}` }).click()
+  const previousEditor = page.getByRole('dialog', { name: nickname })
+  await previousEditor.getByRole('textbox', { name: `Note for ${nickname} on ${previousDate}` }).fill('A separate note from yesterday.')
+  await previousEditor.getByRole('button', { name: 'Save' }).click()
+
+  await page.getByRole('button', { name: 'Next day' }).click()
+  await card.getByRole('button', { name: `Open ${nickname}` }).click()
+  await page.getByRole('button', { name: 'Plant notebook' }).click()
+  await expect(page.getByText('A note for the selected day.')).toBeVisible()
+  await expect(page.getByText('A separate note from yesterday.')).toBeVisible()
+  await page.getByRole('button', { name: 'Plant photos' }).click()
+  await expect(page.getByRole('button', { name: `View photo from ${new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${activeDate}T12:00:00`))}` })).toHaveCount(2)
+})
