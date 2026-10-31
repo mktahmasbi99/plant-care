@@ -623,17 +623,15 @@ def run_scheduled_backups(current: datetime | None = None) -> None:
         )
         if scheduled > current:
             due -= timedelta(days=7 if weekday is not None else 1)
-        with transaction() as db:
+        with connect() as db:
             row = db.execute(
                 "SELECT last_scheduled_date FROM backup_runs WHERE backup_type=?", (category,)
             ).fetchone()
-            if row is None:
-                db.execute("INSERT INTO backup_runs VALUES (?,?)", (category, due.isoformat()))
-                continue
-            if row["last_scheduled_date"] >= due.isoformat():
-                continue
-            db.execute(
-                "UPDATE backup_runs SET last_scheduled_date=? WHERE backup_type=?",
-                (due.isoformat(), category),
-            )
+        if row and row["last_scheduled_date"] >= due.isoformat():
+            continue
         create_backup(category)
+        with transaction() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO backup_runs VALUES (?,?)",
+                (category, due.isoformat()),
+            )
