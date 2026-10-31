@@ -45,8 +45,8 @@ function lastWateredLabel(plant: Plant) {
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 function dateAfter(day: string, days: number) {
-  const result = new Date(`${day}T12:00:00`);
-  result.setDate(result.getDate() + days);
+  const result = new Date(`${day}T12:00:00Z`);
+  result.setUTCDate(result.getUTCDate() + days);
   return result.toISOString().slice(0, 10);
 }
 function CalendarDialog({

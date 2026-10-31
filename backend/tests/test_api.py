@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from fastapi.testclient import TestClient
 from PIL import Image
 
+import app.database as database_module
 import app.main as main_module
 from app.database import backup_settings, initialize, run_scheduled_backups
 from app.main import app
@@ -334,6 +335,34 @@ def test_backup_schedule_catches_up_once_and_retains_only_the_configured_count(
     run_scheduled_backups(first + timedelta(days=2))
     items = client_for(tmp_path, monkeypatch).get("/api/backups").json()
     assert [item["category"] for item in items] == ["daily"]
+
+
+def test_first_scheduled_backup_retries_after_creation_failure(tmp_path, monkeypatch):
+    client_for(tmp_path, monkeypatch)
+    with sqlite3.connect(tmp_path / "plant-care.sqlite3") as db:
+        db.execute("UPDATE backup_settings SET weekly_enabled=0")
+
+    current = datetime(2026, 9, 1, 2, 0, tzinfo=main_module.TZ)
+    create_backup = database_module.create_backup
+
+    def fail_backup(_category):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(database_module, "create_backup", fail_backup)
+    try:
+        run_scheduled_backups(current)
+    except OSError:
+        pass
+    else:
+        raise AssertionError("Backup failure should be reported to the scheduler.")
+
+    with sqlite3.connect(tmp_path / "plant-care.sqlite3") as db:
+        assert db.execute("SELECT COUNT(*) FROM backup_runs").fetchone()[0] == 0
+
+    monkeypatch.setattr(database_module, "create_backup", create_backup)
+    run_scheduled_backups(current)
+    backups = client_for(tmp_path, monkeypatch).get("/api/backups").json()
+    assert [item["category"] for item in backups] == ["daily"]
 
 
 def test_photo_is_processed_and_can_become_a_cover(tmp_path, monkeypatch):
