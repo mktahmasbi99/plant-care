@@ -123,6 +123,7 @@ test('keeps notes, photos, and watering actions tied to the selected day', async
   await page.getByRole('button', { name: 'Plant notebook' }).click()
   await expect(page.getByText('A note for the selected day.')).toBeVisible()
   await expect(page.getByText('A separate note from yesterday.')).toBeVisible()
+  await page.evaluate(() => window.scrollTo(0, 0))
   await page.getByRole('button', { name: 'Plant photos' }).click()
   const dayLabel = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${activeDate}T12:00:00`))
   await expect(page.getByRole('button', { name: `View photo from ${dayLabel}` })).toHaveCount(2)
