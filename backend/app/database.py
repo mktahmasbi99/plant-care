@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 DB_ENV = "PLANT_CARE_DB"
 DEFAULT_DB = "./data/plant_care.sqlite3"
 APP_ID = "plant-care"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 BACKUP_APP_ID = APP_ID
 BACKUP_FORMAT_VERSION = 1
 BACKUP_PREFIXES = {
@@ -185,13 +185,14 @@ def _migrate_v5(db: sqlite3.Connection) -> None:
             mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
             width INTEGER NOT NULL,
             height INTEGER NOT NULL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            source_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL
         )"""
     )
     db.execute(
         """INSERT OR IGNORE INTO plant_profile_photos
-           (plant_id,image,thumbnail,mime_type,width,height,created_at)
-           SELECT plant_id,image,thumbnail,mime_type,width,height,created_at
+           (plant_id,image,thumbnail,mime_type,width,height,created_at,source_photo_id)
+           SELECT plant_id,image,thumbnail,mime_type,width,height,created_at,id
            FROM photos WHERE is_cover=1"""
     )
     db.execute(
@@ -201,6 +202,22 @@ def _migrate_v5(db: sqlite3.Connection) -> None:
     db.execute(
         "CREATE INDEX IF NOT EXISTS photos_by_plant_date ON photos(plant_id,care_date DESC,id DESC)"
     )
+
+
+def _migrate_v6(db: sqlite3.Connection) -> None:
+    if "started_on" not in _columns(db, "plants"):
+        db.execute("ALTER TABLE plants ADD COLUMN started_on TEXT")
+    if "source_photo_id" not in _columns(db, "plant_profile_photos"):
+        db.execute(
+            "ALTER TABLE plant_profile_photos ADD COLUMN source_photo_id INTEGER "
+            "REFERENCES photos(id) ON DELETE SET NULL"
+        )
+        db.execute(
+            """UPDATE plant_profile_photos SET source_photo_id=(
+                   SELECT id FROM photos WHERE photos.plant_id=plant_profile_photos.plant_id
+                   AND is_cover=1 ORDER BY id LIMIT 1
+               )"""
+        )
 
 
 def initialize(path: Path | None = None) -> None:
@@ -219,6 +236,7 @@ def initialize(path: Path | None = None) -> None:
                 archived_at TEXT,
                 sort_position INTEGER NOT NULL DEFAULT 0,
                 snoozed_until TEXT,
+                started_on TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -304,7 +322,8 @@ def initialize(path: Path | None = None) -> None:
                 mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
                 width INTEGER NOT NULL,
                 height INTEGER NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                source_photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL
             );
             CREATE TABLE IF NOT EXISTS fertilizer_products (
                 id INTEGER PRIMARY KEY,
@@ -355,6 +374,8 @@ def initialize(path: Path | None = None) -> None:
             _migrate_v3(db)
         if version < 5:
             _migrate_v5(db)
+        if version < 6:
+            _migrate_v6(db)
         db.execute("INSERT OR IGNORE INTO backup_settings(id) VALUES (1)")
         db.execute(
             "INSERT OR REPLACE INTO app_metadata(key, value) VALUES (?, ?)",

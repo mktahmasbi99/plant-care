@@ -31,6 +31,39 @@ def make_plant(client, **overrides):
     return response.json()
 
 
+def test_started_on_is_a_watering_baseline_without_creating_a_watering_event(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    plant = make_plant(client, started_on="2026-01-01")
+    assert plant["started_on"] == "2026-01-01"
+    initial = client.get("/api/dashboard?day=2026-01-08").json()["plants"][0]
+    assert initial["last_watered"] is None
+    assert initial["watering_signal"]["days_since"] == 7
+    assert initial["watering_signal"]["estimated_interval_days"] is None
+    assert not [
+        event
+        for event in client.get(f"/api/plants/{plant['id']}").json()["timeline"]
+        if event["type"] == "watering"
+    ]
+
+    assert (
+        client.post(
+            f"/api/plants/{plant['id']}/waterings", json={"care_date": "2026-01-08"}
+        ).status_code
+        == 201
+    )
+    signal = client.get("/api/dashboard?day=2026-01-15").json()["plants"][0]["watering_signal"]
+    assert signal["days_since"] == 7
+    assert signal["estimated_interval_days"] == 7
+    assert signal["interval_count"] == 1
+
+
+def test_started_on_cannot_be_in_the_future(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    monkeypatch.setattr(main_module, "today", lambda: date(2026, 1, 1))
+    response = client.post("/api/plants", json={"species": "Fern", "started_on": "2026-01-02"})
+    assert response.status_code == 422
+
+
 def test_dashboard_learns_a_tentative_gap_and_shows_two_amber_levels(tmp_path, monkeypatch):
     client = client_for(tmp_path, monkeypatch)
     plant = make_plant(client, initial_last_watered="2026-01-01")
@@ -312,6 +345,24 @@ def test_photos_are_date_specific_and_profile_photo_is_separate(tmp_path, monkey
     )
     assert client.get("/api/dashboard?day=2026-10-20").json()["plants"][0]["day_photo_count"] == 2
 
+    selected = client.post(f"/api/photos/{photos[0]['id']}/profile")
+    assert selected.status_code == 200
+    detail = client.get(f"/api/plants/{plant['id']}").json()
+    assert detail["profile_photo_source_id"] == photos[0]["id"]
+    gallery_image = client.get(f"/api/photos/{photos[0]['id']}")
+    assert gallery_image.status_code == 200
+    assert client.get(f"/api/plants/{plant['id']}/profile-photo").content == gallery_image.content
+    assert client.delete(f"/api/photos/{photos[0]['id']}").status_code == 204
+    detail = client.get(f"/api/plants/{plant['id']}").json()
+    assert detail["profile_photo_id"] == profile.json()["id"]
+    assert detail["profile_photo_source_id"] is None
+    uploaded = client.put(
+        f"/api/plants/{plant['id']}/profile-photo",
+        files={"file": ("replacement.png", photo_bytes, "image/png")},
+    )
+    assert uploaded.status_code == 200
+    assert client.get(f"/api/plants/{plant['id']}").json()["profile_photo_source_id"] is None
+
 
 def test_v4_migration_dates_photos_merges_notes_and_copies_existing_cover(tmp_path, monkeypatch):
     client = client_for(tmp_path, monkeypatch)
@@ -360,7 +411,38 @@ def test_v4_migration_dates_photos_merges_notes_and_copies_existing_cover(tmp_pa
         assert [photo["care_date"] for photo in photos] == ["2026-10-20", "2026-10-20"]
         assert [photo["journal_entry_id"] for photo in photos] == [note["id"], note["id"]]
         assert profile["image"] == b"full" and profile["thumbnail"] == b"thumb"
+        assert profile["source_photo_id"] == photos[0]["id"]
         assert db.execute("PRAGMA foreign_key_check").fetchone() is None
+
+
+def test_v5_migration_adds_started_on_and_links_existing_profile_cover(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    plant = make_plant(client)
+    source = io.BytesIO()
+    Image.new("RGB", (40, 30), (40, 140, 70)).save(source, format="PNG")
+    photo = client.post(
+        f"/api/plants/{plant['id']}/photos",
+        data={"care_date": "2026-10-20"},
+        files={"file": ("leaf.png", source.getvalue(), "image/png")},
+    ).json()
+    client.post(f"/api/photos/{photo['id']}/cover")
+    path = tmp_path / "plant-care.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute(
+            """INSERT INTO plant_profile_photos
+               (plant_id,image,thumbnail,mime_type,width,height,created_at)
+               SELECT plant_id,image,thumbnail,mime_type,width,height,created_at
+               FROM photos WHERE id=?""",
+            (photo["id"],),
+        )
+        db.execute("ALTER TABLE plants DROP COLUMN started_on")
+        db.execute("ALTER TABLE plant_profile_photos DROP COLUMN source_photo_id")
+        db.execute("UPDATE app_metadata SET value='5' WHERE key='schema_version'")
+
+    initialize(path)
+    detail = client.get(f"/api/plants/{plant['id']}").json()
+    assert detail["started_on"] is None
+    assert detail["profile_photo_source_id"] == photo["id"]
 
 
 def test_delete_is_irreversible_and_requires_typed_confirmation(tmp_path, monkeypatch):

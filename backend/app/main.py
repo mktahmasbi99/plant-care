@@ -113,6 +113,8 @@ class PlantInput(BaseModel):
     nickname: str = Field(default="", max_length=160)
     location: str = Field(default="", max_length=160)
     care_note: str = Field(default="", max_length=10000)
+    started_on: str | None = None
+    # Kept for existing API clients that explicitly record an initial watering.
     initial_last_watered: str | None = None
 
 
@@ -201,16 +203,23 @@ def last_check(db: sqlite3.Connection, plant_id: int) -> sqlite3.Row | None:
 
 
 def watering_signal(db: sqlite3.Connection, plant: sqlite3.Row, current: date) -> dict:
-    dates = [
-        parse_date(row["care_date"])
-        for row in db.execute(
-            """SELECT DISTINCT care_date FROM watering_events
-               WHERE plant_id=? AND care_date<=? ORDER BY care_date DESC LIMIT 6""",
-            (plant["id"], current.isoformat()),
-        )
-    ]
-    last = last_watering(db, plant["id"])
-    days_since = (current - parse_date(last["care_date"])).days if last else None
+    started_on = parse_date(plant["started_on"]) if plant["started_on"] else None
+    rows = db.execute(
+        """SELECT DISTINCT care_date FROM watering_events
+           WHERE plant_id=? AND care_date<=?
+             AND (? IS NULL OR care_date>=?) ORDER BY care_date DESC LIMIT 6""",
+        (
+            plant["id"],
+            current.isoformat(),
+            started_on.isoformat() if started_on else None,
+            started_on.isoformat() if started_on else None,
+        ),
+    ).fetchall()
+    dates = [parse_date(row["care_date"]) for row in rows]
+    if started_on and started_on <= current:
+        dates = sorted({*dates, started_on}, reverse=True)[:6]
+    last_date = dates[0] if dates else None
+    days_since = (current - last_date).days if last_date else None
     gaps = [(dates[index] - dates[index + 1]).days for index in range(len(dates) - 1)]
     weights = [0.5**index for index in range(len(gaps))]
     estimate = (
@@ -251,7 +260,7 @@ def plant_payload(db: sqlite3.Connection, plant: sqlite3.Row, current: date | No
         "SELECT id FROM photos WHERE plant_id=? AND is_cover=1", (plant["id"],)
     ).fetchone()
     profile_photo = db.execute(
-        "SELECT id FROM plant_profile_photos WHERE plant_id=?", (plant["id"],)
+        "SELECT id,source_photo_id FROM plant_profile_photos WHERE plant_id=?", (plant["id"],)
     ).fetchone()
     day = current.isoformat()
     day_note = db.execute(
@@ -274,6 +283,7 @@ def plant_payload(db: sqlite3.Connection, plant: sqlite3.Row, current: date | No
         "display_name": display_name(plant),
         "location": plant["location"] or "",
         "care_note": plant["care_note"],
+        "started_on": plant["started_on"],
         "archived_at": plant["archived_at"],
         "created_at": plant["created_at"],
         "sort_position": plant["sort_position"],
@@ -286,6 +296,7 @@ def plant_payload(db: sqlite3.Connection, plant: sqlite3.Row, current: date | No
         "watering_signal": watering_signal(db, plant, current),
         "cover_photo_id": cover["id"] if cover else None,
         "profile_photo_id": profile_photo["id"] if profile_photo else None,
+        "profile_photo_source_id": profile_photo["source_photo_id"] if profile_photo else None,
         "day_note_id": day_note["id"] if day_note else None,
         "day_photo_count": day_photo_count,
         "day_watered_check_id": day_watered_check["id"] if day_watered_check else None,
@@ -338,6 +349,9 @@ def list_plants(include_archived: bool = False):
 
 @app.post("/api/plants", status_code=201)
 def create_plant(payload: PlantInput):
+    started_on = parse_date(payload.started_on) if payload.started_on else None
+    if started_on and started_on > today():
+        raise HTTPException(422, "Started on date cannot be in the future.")
     initial = parse_date(payload.initial_last_watered) if payload.initial_last_watered else None
     timestamp = now()
     with transaction() as db:
@@ -345,14 +359,15 @@ def create_plant(payload: PlantInput):
             0
         ]
         cursor = db.execute(
-            """INSERT INTO plants(species,nickname,location,care_note,sort_position,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?)""",
+            """INSERT INTO plants(species,nickname,location,care_note,sort_position,started_on,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?)""",
             (
                 payload.species.strip(),
                 payload.nickname.strip(),
                 payload.location.strip(),
                 payload.care_note,
                 position,
+                started_on.isoformat() if started_on else None,
                 timestamp,
                 timestamp,
             ),
@@ -841,7 +856,7 @@ async def upload_profile_photo(plant_id: int, file: UploadFile = File(...)):
             """INSERT INTO plant_profile_photos(plant_id,image,thumbnail,width,height,created_at)
                VALUES (?,?,?,?,?,?) ON CONFLICT(plant_id) DO UPDATE SET
                image=excluded.image,thumbnail=excluded.thumbnail,width=excluded.width,
-               height=excluded.height,created_at=excluded.created_at""",
+               height=excluded.height,created_at=excluded.created_at,source_photo_id=NULL""",
             (plant_id, full, thumbnail, width, height, now()),
         )
         row = db.execute(
@@ -890,6 +905,34 @@ def choose_cover(photo_id: int):
         db.execute("UPDATE photos SET is_cover=0 WHERE plant_id=?", (photo["plant_id"],))
         db.execute("UPDATE photos SET is_cover=1 WHERE id=?", (photo_id,))
         return {"cover_photo_id": photo_id}
+
+
+@app.post("/api/photos/{photo_id}/profile")
+def choose_profile_photo(photo_id: int):
+    with transaction() as db:
+        photo = require_row(
+            db.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone(),
+            "Photo not found.",
+        )
+        db.execute(
+            """INSERT INTO plant_profile_photos
+               (plant_id,image,thumbnail,mime_type,width,height,created_at,source_photo_id)
+               VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(plant_id) DO UPDATE SET
+               image=excluded.image,thumbnail=excluded.thumbnail,mime_type=excluded.mime_type,
+               width=excluded.width,height=excluded.height,created_at=excluded.created_at,
+               source_photo_id=excluded.source_photo_id""",
+            (
+                photo["plant_id"],
+                photo["image"],
+                photo["thumbnail"],
+                photo["mime_type"],
+                photo["width"],
+                photo["height"],
+                photo["created_at"],
+                photo_id,
+            ),
+        )
+        return {"profile_photo_source_id": photo_id}
 
 
 @app.delete("/api/photos/{photo_id}")

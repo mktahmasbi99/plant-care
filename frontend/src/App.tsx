@@ -18,6 +18,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   BookOpen,
+  Camera,
   Download,
   Droplets,
   FileImage,
@@ -41,7 +42,7 @@ import { usePwaInstall } from "./hooks/usePwaInstall";
 type Page = "home" | "detail" | "fertilizer" | "settings" | "add";
 function lastWateredLabel(plant: Plant) {
   const days = plant.watering_signal.days_since;
-  if (!plant.last_watered || days === null) return "Never";
+  if (!(plant.last_watered || plant.started_on) || days === null) return "Never";
   if (days < 0) return plant.last_watered;
   if (days === 0) return "Today";
   if (days === 1) return "Yesterday";
@@ -442,14 +443,14 @@ function PlantCard({
         </div>
       </div>
       <div className="water-summary">
-        <span>Last watered</span>
+        <span>{!plant.last_watered && plant.started_on ? "Started on" : "Last watered"}</span>
         <strong>{lastWateredLabel(plant)}</strong>
         <span
           className={`signal-dot ${plant.watering_signal.level}`}
           role="img"
           aria-label={signalText(plant)}
         />
-        <small>{plant.last_watered || "No date recorded"}</small>
+        <small>{plant.last_watered || plant.started_on || "No date recorded"}</small>
       </div>
       <div className="card-footer">
         <span>{signalText(plant)} · {patternText(plant)}</span>
@@ -588,7 +589,7 @@ function PlantList({
   onReorder: (ids: number[]) => void;
 }) {
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(PointerSensor, { activationConstraint: { delay: 450, tolerance: 8 } }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
@@ -645,8 +646,9 @@ function PlantForm({
   const [nickname, setNickname] = useState(initial?.nickname || "");
   const [location, setLocation] = useState(initial?.location || "");
   const [careNote, setCareNote] = useState(initial?.care_note || "");
-  const [lastWatered, setLastWatered] = useState("");
+  const [startedOn, setStartedOn] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
+  const profilePhotoInput = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -658,7 +660,7 @@ function PlantForm({
           nickname,
           location,
           care_note: careNote,
-          initial_last_watered: lastWatered || null,
+          started_on: startedOn || null,
         },
         photo,
       );
@@ -686,24 +688,41 @@ function PlantForm({
       </label>
       {!initial && (
         <label>
-          Last watered <span className="optional">optional</span>
+          Started on <span className="optional">optional</span>
           <input
             type="date"
-            value={lastWatered}
-            onChange={(e) => setLastWatered(e.target.value)}
+            max={new Date().toISOString().slice(0, 10)}
+            value={startedOn}
+            onChange={(e) => setStartedOn(e.target.value)}
           />
         </label>
       )}
-      <label>
-        Profile photo <span className="optional">optional</span>
+      <div className="profile-photo-field">
+        <span>Profile photo <span className="optional">optional</span></span>
         <input
+          ref={profilePhotoInput}
+          className="visually-hidden"
           aria-label="Plant profile photo"
           type="file"
           accept="image/jpeg,image/png,image/webp,image/heic"
           capture="environment"
           onChange={(event) => setPhoto(event.target.files?.[0] || null)}
         />
-      </label>
+        <button
+          type="button"
+          className="profile-photo-picker"
+          aria-label="Choose profile photo"
+          onClick={() => profilePhotoInput.current?.click()}
+        >
+          {initial?.profile_photo_id ? (
+            <img src={`/api/plants/${initial.id}/profile-photo?thumbnail=true`} alt="Current profile photo" />
+          ) : (
+            <span className="profile-photo-placeholder"><Leaf size={28} /></span>
+          )}
+          <span className="profile-photo-camera" aria-hidden="true"><Camera size={16} /></span>
+        </button>
+        {photo && <small>{photo.name}</small>}
+      </div>
       <label>
         Care instructions <span className="optional">permanent note</span>
         <textarea
@@ -1299,6 +1318,7 @@ function PlantDetailView({
   const [product, setProduct] = useState("");
   const [previewPhoto, setPreviewPhoto] = useState<TimelineEvent | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [profileMenuId, setProfileMenuId] = useState<number | null>(null);
   const [showDelete, setShowDelete] = useState(false);
   const [editingWatering, setEditingWatering] = useState<{
     id: number;
@@ -1362,7 +1382,7 @@ function PlantDetailView({
             {detail.location ? ` · ${detail.location}` : ""}
           </p>
           <strong className="detail-watered">
-            Last watered: {lastWateredLabel(detail)}
+            {!detail.last_watered && detail.started_on ? "Started on: " : "Last watered: "}{lastWateredLabel(detail)}
             <span
               className={`signal-dot ${detail.watering_signal.level}`}
               role="img"
@@ -1370,7 +1390,7 @@ function PlantDetailView({
             />
           </strong>
           <small>
-            {detail.last_watered || "No date recorded"} · {signalText(detail)} ·{" "}
+            {detail.last_watered || detail.started_on || "No date recorded"} · {signalText(detail)} ·{" "}
             {patternText(detail)}
           </small>
         </div>
@@ -1495,16 +1515,44 @@ function PlantDetailView({
                 <section className="photo-day-group" key={day}>
                   <h4>{formatCareDate(day)}</h4>
                   <div className="photo-grid">
-                    {events.map((event) => (
-                      <button
-                        className="photo-history-item"
-                        key={`photo-${event.id}`}
-                        aria-label={`View photo from ${formatCareDate(day)}`}
-                        onClick={() => setPreviewPhoto(event)}
-                      >
-                        <img src={`/api/photos/${event.id}?thumbnail=true`} alt={String(event.caption || "Plant progress photo")} />
-                      </button>
-                    ))}
+                    {events.map((event) => {
+                      const isProfile = detail.profile_photo_source_id === event.id;
+                      return (
+                        <article className="photo-history-card" key={`photo-${event.id}`}>
+                          <button
+                            className="photo-history-item"
+                            aria-label={`View photo from ${formatCareDate(day)}`}
+                            onClick={() => setPreviewPhoto(event)}
+                          >
+                            <img src={`/api/photos/${event.id}?thumbnail=true`} alt={String(event.caption || "Plant progress photo")} />
+                          </button>
+                          <button
+                            className="photo-history-menu-button"
+                            aria-label={`Photo options for ${formatCareDate(day)}`}
+                            aria-expanded={profileMenuId === event.id}
+                            onClick={() => setProfileMenuId((id) => id === event.id ? null : event.id)}
+                          >
+                            <MoreVertical size={18} />
+                          </button>
+                          {isProfile && <span className="photo-profile-badge"><Camera size={14} /> Profile photo</span>}
+                          {profileMenuId === event.id && (
+                            <div className="photo-history-menu" role="menu">
+                              <button
+                                role="menuitem"
+                                disabled={isProfile}
+                                onClick={async () => {
+                                  await api.setProfilePhotoFromGallery(event.id);
+                                  setProfileMenuId(null);
+                                  onRefresh();
+                                }}
+                              >
+                                {isProfile ? "Current profile photo" : "Set as profile photo"}
+                              </button>
+                            </div>
+                          )}
+                        </article>
+                      );
+                    })}
                   </div>
                 </section>
               ))}
