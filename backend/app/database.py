@@ -200,8 +200,7 @@ def _migrate_v5(db: sqlite3.Connection) -> None:
         "ON journal_entries(plant_id,care_date)"
     )
     db.execute(
-        "CREATE INDEX IF NOT EXISTS photos_by_plant_date "
-        "ON photos(plant_id,care_date DESC,id DESC)"
+        "CREATE INDEX IF NOT EXISTS photos_by_plant_date ON photos(plant_id,care_date DESC,id DESC)"
     )
 
 

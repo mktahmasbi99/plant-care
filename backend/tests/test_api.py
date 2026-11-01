@@ -254,14 +254,22 @@ def test_journal_upserts_one_note_per_plant_day(tmp_path, monkeypatch):
     ).json()
 
     assert updated["id"] == first["id"]
-    assert client.get(f"/api/plants/{plant['id']}/journal/2026-10-20").json()["body"] == "Revised note"
+    assert (
+        client.get(f"/api/plants/{plant['id']}/journal/2026-10-20").json()["body"] == "Revised note"
+    )
     assert client.get(f"/api/plants/{plant['id']}/journal/2026-10-21").json() is None
-    assert client.post(
-        f"/api/plants/{plant['id']}/journal",
-        json={"care_date": "2026-10-21", "body": "Another day"},
-    ).status_code == 201
+    assert (
+        client.post(
+            f"/api/plants/{plant['id']}/journal",
+            json={"care_date": "2026-10-21", "body": "Another day"},
+        ).status_code
+        == 201
+    )
     assert len(client.get(f"/api/plants/{plant['id']}/journal").json()) == 2
-    assert client.get("/api/dashboard?day=2026-10-20").json()["plants"][0]["day_note_id"] == first["id"]
+    assert (
+        client.get("/api/dashboard?day=2026-10-20").json()["plants"][0]["day_note_id"]
+        == first["id"]
+    )
 
 
 def test_watering_action_is_idempotent_and_exposed_for_the_selected_day(tmp_path, monkeypatch):
@@ -274,13 +282,26 @@ def test_watering_action_is_idempotent_and_exposed_for_the_selected_day(tmp_path
 
     assert repeated["id"] == first["id"]
     with sqlite3.connect(tmp_path / "plant-care.sqlite3") as db:
-        assert db.execute("SELECT COUNT(*) FROM plant_checks WHERE plant_id=?", (plant["id"],)).fetchone()[0] == 1
-        assert db.execute("SELECT COUNT(*) FROM watering_events WHERE plant_id=?", (plant["id"],)).fetchone()[0] == 1
+        assert (
+            db.execute(
+                "SELECT COUNT(*) FROM plant_checks WHERE plant_id=?", (plant["id"],)
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            db.execute(
+                "SELECT COUNT(*) FROM watering_events WHERE plant_id=?", (plant["id"],)
+            ).fetchone()[0]
+            == 1
+        )
     dashboard = client.get("/api/dashboard?day=2026-10-20").json()["plants"][0]
     assert dashboard["day_watered_check_id"] == first["id"]
 
     assert client.delete(f"/api/checks/{first['id']}").status_code == 204
-    assert client.get("/api/dashboard?day=2026-10-20").json()["plants"][0]["day_watered_check_id"] is None
+    assert (
+        client.get("/api/dashboard?day=2026-10-20").json()["plants"][0]["day_watered_check_id"]
+        is None
+    )
 
 
 def test_photos_are_date_specific_and_profile_photo_is_separate(tmp_path, monkeypatch):
@@ -308,8 +329,15 @@ def test_photos_are_date_specific_and_profile_photo_is_separate(tmp_path, monkey
         files={"file": ("profile.png", photo_bytes, "image/png")},
     )
     assert profile.status_code == 200
-    assert client.get(f"/api/plants/{plant['id']}").json()["profile_photo_id"] == profile.json()["id"]
-    assert client.get(f"/api/plants/{plant['id']}/profile-photo?thumbnail=true").headers["content-type"] == "image/jpeg"
+    assert (
+        client.get(f"/api/plants/{plant['id']}").json()["profile_photo_id"] == profile.json()["id"]
+    )
+    assert (
+        client.get(f"/api/plants/{plant['id']}/profile-photo?thumbnail=true").headers[
+            "content-type"
+        ]
+        == "image/jpeg"
+    )
     assert client.get("/api/dashboard?day=2026-10-20").json()["plants"][0]["day_photo_count"] == 2
 
     selected = client.post(f"/api/photos/{photos[0]['id']}/profile")
@@ -365,9 +393,15 @@ def test_v4_migration_dates_photos_merges_notes_and_copies_existing_cover(tmp_pa
     initialize(path)
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
-        note = db.execute("SELECT * FROM journal_entries WHERE plant_id=?", (plant["id"],)).fetchone()
-        photos = db.execute("SELECT * FROM photos WHERE plant_id=? ORDER BY id", (plant["id"],)).fetchall()
-        profile = db.execute("SELECT * FROM plant_profile_photos WHERE plant_id=?", (plant["id"],)).fetchone()
+        note = db.execute(
+            "SELECT * FROM journal_entries WHERE plant_id=?", (plant["id"],)
+        ).fetchone()
+        photos = db.execute(
+            "SELECT * FROM photos WHERE plant_id=? ORDER BY id", (plant["id"],)
+        ).fetchall()
+        profile = db.execute(
+            "SELECT * FROM plant_profile_photos WHERE plant_id=?", (plant["id"],)
+        ).fetchone()
         assert note["body"] == "Morning note\n\nEvening note"
         assert [photo["care_date"] for photo in photos] == ["2026-10-20", "2026-10-20"]
         assert [photo["journal_entry_id"] for photo in photos] == [note["id"], note["id"]]
