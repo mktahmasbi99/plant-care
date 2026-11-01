@@ -6,6 +6,7 @@ export type Plant = {
   display_name: string;
   location: string;
   care_note: string;
+  started_on: string | null;
   archived_at: string | null;
   created_at: string;
   last_watered: string | null;
@@ -23,6 +24,7 @@ export type Plant = {
   };
   cover_photo_id: number | null;
   profile_photo_id: number | null;
+  profile_photo_source_id: number | null;
   day_note_id: number | null;
   day_photo_count: number;
   day_watered_check_id: number | null;
@@ -172,6 +174,10 @@ export const api = {
       );
     return response.json() as Promise<{ id: number }>;
   },
+  setProfilePhotoFromGallery: (photo: number) =>
+    request<{ profile_photo_source_id: number }>(`/api/photos/${photo}/profile`, {
+      method: "POST",
+    }),
   backups: () => request<BackupFile[]>("/api/backups"),
   backupSettings: () => request<BackupSettings>("/api/backups/settings"),
   saveBackupSettings: (data: BackupSettings) => request<BackupSettings>("/api/backups/settings", {
