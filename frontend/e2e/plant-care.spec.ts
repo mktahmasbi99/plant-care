@@ -183,7 +183,11 @@ test('keeps notes, photos, and watering actions tied to the selected day', async
   const dayLabel = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${activeDate}T12:00:00`))
   await expect(page.getByRole('button', { name: `View photo from ${dayLabel}` })).toHaveCount(2)
   await page.getByRole('button', { name: `Photo options for ${dayLabel}` }).first().click()
+  const profileSelection = page.waitForResponse(
+    (response) => response.url().includes('/api/photos/') && response.url().endsWith('/profile') && response.request().method() === 'POST',
+  )
   await page.getByRole('menuitem', { name: 'Set as profile photo' }).click()
+  expect((await profileSelection).ok()).toBeTruthy()
   const plants = await (await page.request.get('/api/plants')).json()
   const current = plants.find((plant: { nickname: string }) => plant.nickname === nickname)
   expect(current.profile_photo_source_id).toEqual(expect.any(Number))
