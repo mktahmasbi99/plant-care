@@ -1136,6 +1136,20 @@ nav button.active {
   color: #28633a;
   font-weight: 800;
 }
+@media (max-width: 639px) {
+  .detail-hero {
+    flex-wrap: wrap;
+  }
+  .detail-hero > div:nth-child(2) {
+    flex: 1;
+    min-width: 0;
+  }
+  .detail-controls {
+    flex: 1 0 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+  }
+}
 @media (min-width: 640px) {
   .app-shell {
     padding-left: 1.5rem;
