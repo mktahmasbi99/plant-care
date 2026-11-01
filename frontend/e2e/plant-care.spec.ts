@@ -56,7 +56,7 @@ test('adds a pot and snoozes its learned watering signal', async ({ page }) => {
     data: { care_date: daysAgo(14) },
   })
   expect(watering.ok()).toBeTruthy()
-  await page.reload()
+  await page.goto('/')
   const card = page
     .locator('article.plant-card')
     .filter({ has: page.getByRole('button', { name: 'Open Kitchen Monstera' }) })
@@ -157,7 +157,7 @@ test('reordering cards requires a press and hold on the drag handle', async ({ p
   const suffix = Date.now()
   await create(`Hold first ${suffix}`)
   await create(`Hold second ${suffix}`)
-  await page.reload()
+  await page.goto('/')
   const first = page.locator('article.plant-card').filter({ has: page.getByRole('button', { name: `Open Hold first ${suffix}` }) })
   const second = page.locator('article.plant-card').filter({ has: page.getByRole('button', { name: `Open Hold second ${suffix}` }) })
   const order = async () => page.locator('.card-main').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))
