@@ -1,3 +1,5 @@
+import { SettingsDisclosure } from "./SettingsDisclosure";
+
 export type PwaInstallState = {
   canPrompt: boolean;
   install: () => Promise<void>;
@@ -23,5 +25,5 @@ export function InstallAppPanel({ state }: { state: PwaInstallState }) {
     content = <p className="muted">Use your browser menu to install this app. If Install is not available yet, keep this page open briefly and try again.</p>;
   }
 
-  return <section className="panel settings install-settings"><h2>Install app</h2>{content}</section>;
+  return <SettingsDisclosure title="Install app" className="install-settings">{content}</SettingsDisclosure>;
 }

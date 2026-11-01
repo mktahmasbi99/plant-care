@@ -1180,6 +1180,36 @@ button.watering-calendar-day.selected {
   display: grid;
   gap: 0.6rem;
 }
+.settings-disclosure {
+  padding: 0.45rem 0.75rem;
+}
+.settings-disclosure[open] {
+  padding: 1rem;
+}
+.settings-disclosure > summary {
+  min-height: 2.5rem;
+  cursor: pointer;
+}
+.settings-disclosure > summary::marker {
+  content: "▸  ";
+  color: #326a42;
+}
+.settings-disclosure[open] > summary::marker {
+  content: "▾  ";
+}
+.settings-disclosure > summary:focus-visible {
+  outline: 2px solid #326a42;
+  outline-offset: 3px;
+  border-radius: 0.25rem;
+}
+.settings-disclosure > summary h2 {
+  display: inline;
+  margin: 0;
+}
+.settings-disclosure > form {
+  display: grid;
+  gap: 0.6rem;
+}
 .settings p {
   color: #536156;
   margin-bottom: 0.2rem;
@@ -1584,6 +1614,12 @@ nav button.active {
   }
   .empty p {
     color: #aebcaf;
+  }
+  .settings-disclosure > summary::marker {
+    color: #9bd8a4;
+  }
+  .settings-disclosure > summary:focus-visible {
+    outline-color: #9bd8a4;
   }
   .note-editor {
     background: #152019;

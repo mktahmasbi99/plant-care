@@ -7,7 +7,12 @@ test('brand returns to Today from every page', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Settings' }).click()
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+  const installSection = page.locator('details.settings-disclosure').filter({
+    has: page.getByRole('heading', { name: 'Install app' }),
+  })
+  await page.getByRole('button', { name: 'Install app' }).click()
   await expect(page.getByRole('heading', { name: 'Install app' })).toBeVisible()
+  await expect(installSection).toHaveJSProperty('open', true)
   await brand.click()
   await expect(today).toBeVisible()
 
@@ -29,6 +34,56 @@ test('brand returns to Today from every page', async ({ page }) => {
   await expect(page.getByRole('heading', { name: plantName, level: 1 })).toBeVisible()
   await brand.click()
   await expect(today).toBeVisible()
+})
+
+test('settings disclosures start closed and open independently', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await expect(page.getByRole('heading', { name: 'Backup schedule' })).toBeVisible()
+
+  const sections = page.locator('details.settings-disclosure')
+  await expect(sections).toHaveCount(5)
+  expect(await sections.evaluateAll((items) => items.map((item) => (item as HTMLDetailsElement).open))).toEqual([
+    false,
+    false,
+    false,
+    false,
+    false,
+  ])
+
+  const backupToggle = page.getByRole('button', { name: 'Backup and restore', expanded: false })
+  await backupToggle.click()
+  await expect(page.getByRole('button', { name: 'Backup and restore', expanded: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Backup schedule' }).click()
+  await expect(sections.nth(0)).toHaveJSProperty('open', true)
+  await expect(sections.nth(3)).toHaveJSProperty('open', true)
+})
+
+test('restore and delete confirmation disclosures open when invoked', async ({ page }) => {
+  const backup = await page.request.post('/api/backups')
+  expect(backup.ok()).toBeTruthy()
+  const filename = backup.headers()['content-disposition']?.match(/filename="?([^";]+)"?/)?.[1]
+  expect(filename).toBeTruthy()
+
+  try {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Backup and restore' }).click()
+    const backupRow = page.locator('.simple-list > div').first()
+    await backupRow.getByRole('button', { name: 'Delete', exact: true }).click()
+
+    const confirmation = page.locator('details.settings-disclosure').filter({
+      has: page.getByText('Type DELETE to continue'),
+    })
+    await expect(confirmation).toHaveJSProperty('open', true)
+    await expect(confirmation.getByRole('button', { name: 'Delete backup' }).first()).toBeVisible()
+    await expect(confirmation.getByRole('textbox')).toBeVisible()
+    await confirmation.getByRole('button', { name: 'Cancel' }).click()
+    await expect(confirmation).toHaveCount(0)
+  } finally {
+    const cleanup = await page.request.delete(`/api/backups/${filename}?confirmation=DELETE`)
+    expect(cleanup.status()).toBe(204)
+  }
 })
 
 test('adds a pot and snoozes its learned watering signal', async ({ page }) => {
@@ -128,7 +183,11 @@ test('keeps notes, photos, and watering actions tied to the selected day', async
   const dayLabel = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${activeDate}T12:00:00`))
   await expect(page.getByRole('button', { name: `View photo from ${dayLabel}` })).toHaveCount(2)
   await page.getByRole('button', { name: `Photo options for ${dayLabel}` }).first().click()
+  const profileSelection = page.waitForResponse(
+    (response) => response.url().includes('/api/photos/') && response.url().endsWith('/profile') && response.request().method() === 'POST',
+  )
   await page.getByRole('menuitem', { name: 'Set as profile photo' }).click()
+  expect((await profileSelection).ok()).toBeTruthy()
   const plants = await (await page.request.get('/api/plants')).json()
   const current = plants.find((plant: { nickname: string }) => plant.nickname === nickname)
   expect(current.profile_photo_source_id).toEqual(expect.any(Number))
@@ -147,17 +206,18 @@ test('keeps notes, photos, and watering actions tied to the selected day', async
 })
 
 test('reordering cards requires a press and hold on the drag handle', async ({ page }) => {
-  await page.goto('/')
   const existing = await (await page.request.get('/api/plants')).json()
   for (const plant of existing) await page.request.post(`/api/plants/${plant.id}/archive`)
+  await page.goto('/')
   const create = async (name: string) => {
-    const response = await page.request.post('/api/plants', { data: { species: name, nickname: name } })
-    expect(response.ok()).toBeTruthy()
+    await page.getByRole('button', { name: 'Add plant' }).click()
+    await page.getByLabel('Species').fill(name)
+    await page.getByRole('button', { name: /add plant/i }).last().click()
+    await expect(page.getByRole('button', { name: `Open ${name}` })).toBeVisible()
   }
   const suffix = Date.now()
   await create(`Hold first ${suffix}`)
   await create(`Hold second ${suffix}`)
-  await page.goto('/')
   const first = page.locator('article.plant-card').filter({ has: page.getByRole('button', { name: `Open Hold first ${suffix}` }) })
   const second = page.locator('article.plant-card').filter({ has: page.getByRole('button', { name: `Open Hold second ${suffix}` }) })
   const order = async () => page.locator('.card-main').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))

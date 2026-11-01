@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { api, BackupFile, BackupSettings, Dashboard, Fertilizer, Plant, PlantDetail, TimelineEvent } from "./api";
 import { InstallAppPanel, type PwaInstallState } from "./components/InstallAppPanel";
+import { SettingsDisclosure } from "./components/SettingsDisclosure";
 import { usePwaInstall } from "./hooks/usePwaInstall";
 
 type Page = "home" | "detail" | "fertilizer" | "settings" | "add";
@@ -1826,19 +1827,17 @@ function Settings({ onRestored, pwaInstall }: { onRestored: () => void; pwaInsta
   const visibleBackups = backups.filter(item => showSafety || !item.safety);
   return (
     <section className="page">
-      <section className="panel settings">
-        <h2>Backup and restore</h2>
+      <SettingsDisclosure title="Backup and restore">
         <p>Backups include your plants, care history, photos, and fertilizer records.</p>
         <button className="water" onClick={() => void (async () => { try { saveDownload(await api.createBackup()); setMessage("Backup created and downloaded."); await load(); } catch (error) { setMessage(error instanceof Error ? error.message : "Backup failed."); } })()}>
           <Download size={16} /> Create backup
         </button>
         <label><input type="checkbox" checked={showSafety} onChange={event => setShowSafety(event.target.checked)} /> Show safety backups</label>
         {visibleBackups.length === 0 ? <p className="muted">No server backups yet.</p> : <div className="simple-list">{visibleBackups.map(item => <div key={item.filename}><span><strong>{item.category.replace("-", " ")}</strong><small>{new Date(item.createdAt).toLocaleString()} · {Math.max(1, Math.round(item.size / 1024))} KB</small></span><span className="quick-tools"><button onClick={() => void api.downloadBackup(item.filename).then(saveDownload).catch(error => setMessage(error.message))}>Download</button><button onClick={() => { setPending({ type: "restore", item }); setActionConfirmation(""); }}>Restore</button><button onClick={() => { setPending({ type: "delete", item }); setActionConfirmation(""); }}>Delete</button></span></div>)}</div>}
-      </section>
-      <form
-        className="panel settings"
-        onSubmit={async (e) => {
-          e.preventDefault();
+      </SettingsDisclosure>
+      <SettingsDisclosure title="Restore uploaded backup">
+        <form onSubmit={async (event) => {
+          event.preventDefault();
           if (!file || confirmation !== "RESTORE") return;
           try {
             const result = await api.restore(file, confirmation);
@@ -1847,35 +1846,57 @@ function Settings({ onRestored, pwaInstall }: { onRestored: () => void; pwaInsta
             onRestored();
             await load();
           } catch (error) {
-            setMessage(
-              error instanceof Error ? error.message : "Restore failed.",
-            );
+            setMessage(error instanceof Error ? error.message : "Restore failed.");
           }
-        }}
-      >
-        <h2>Restore uploaded backup</h2>
-        <p>Only marked Plant Care backups are accepted. The current database is saved first.</p>
-        <input
-          required
-          type="file"
-          accept=".sqlite,.sqlite3,application/x-sqlite3"
-          onChange={(e) => setFile(e.target.files?.[0] || null)}
-        />
-        <label>Type <strong>RESTORE</strong> to continue<input value={confirmation} onChange={event => setConfirmation(event.target.value)} /></label>
-        <button className="secondary" disabled={!file || confirmation !== "RESTORE"}>
-          <Upload size={16} /> Restore backup
-        </button>
-      </form>
-      <form className="panel settings" onSubmit={async event => { event.preventDefault(); if (!legacyFile || legacyConfirmation !== "IMPORT") return; try { const result = await api.importLegacy(legacyFile, legacyConfirmation); setMessage(`Database imported. Safety backup: ${result.backup}`); setLegacyFile(null); setLegacyConfirmation(""); onRestored(); await load(); } catch (error) { setMessage(error instanceof Error ? error.message : "Import failed."); } }}>
-        <h2>Import legacy database</h2><p>For compatible older Plant Care databases that do not have a backup marker.</p>
-        <input type="file" accept=".sqlite,.sqlite3,application/x-sqlite3" onChange={event => setLegacyFile(event.target.files?.[0] || null)} />
-        <label>Type <strong>IMPORT</strong> to continue<input value={legacyConfirmation} onChange={event => setLegacyConfirmation(event.target.value)} /></label>
-        <button className="danger" disabled={!legacyFile || legacyConfirmation !== "IMPORT"}>Replace database</button>
-      </form>
-      {schedule && <form className="panel settings" onSubmit={event => { event.preventDefault(); void api.saveBackupSettings(schedule).then(value => { setSchedule(value); setMessage("Backup schedule saved."); }).catch(error => setMessage(error.message)); }}>
-        <h2>Backup schedule</h2><label><input type="checkbox" checked={schedule.dailyEnabled} onChange={event => setSchedule({ ...schedule, dailyEnabled: event.target.checked })} /> Daily backups</label><label>Time<input type="time" value={schedule.dailyTime} onChange={event => setSchedule({ ...schedule, dailyTime: event.target.value })} /></label><label>Keep<input type="number" min="1" max="365" value={schedule.dailyRetention} onChange={event => setSchedule({ ...schedule, dailyRetention: Number(event.target.value) })} /></label><label><input type="checkbox" checked={schedule.weeklyEnabled} onChange={event => setSchedule({ ...schedule, weeklyEnabled: event.target.checked })} /> Weekly backups</label><label>Day<select value={schedule.weeklyDay} onChange={event => setSchedule({ ...schedule, weeklyDay: Number(event.target.value) })}>{["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((day, index) => <option value={index} key={day}>{day}</option>)}</select></label><label>Time<input type="time" value={schedule.weeklyTime} onChange={event => setSchedule({ ...schedule, weeklyTime: event.target.value })} /></label><label>Keep<input type="number" min="1" max="365" value={schedule.weeklyRetention} onChange={event => setSchedule({ ...schedule, weeklyRetention: Number(event.target.value) })} /></label><label>Safety backups to keep<input type="number" min="1" max="365" value={schedule.safetyRetention} onChange={event => setSchedule({ ...schedule, safetyRetention: Number(event.target.value) })} /></label><button className="secondary">Save schedule</button>
-      </form>}
-      {pending && <section className="panel settings"><h2>{pending.type === "restore" ? "Restore backup" : "Delete backup"}</h2><p>{pending.type === "restore" ? "The current database will be replaced after validation and a safety backup." : "This permanently removes the selected backup file."}</p><strong>{pending.item.filename}</strong><label>Type <strong>{pending.type === "restore" ? "RESTORE" : "DELETE"}</strong> to continue<input autoFocus value={actionConfirmation} onChange={event => setActionConfirmation(event.target.value)} /></label><button className="danger" disabled={actionConfirmation !== (pending.type === "restore" ? "RESTORE" : "DELETE")} onClick={() => void (async () => { try { if (pending.type === "restore") { const result = await api.restoreSavedBackup(pending.item.filename, actionConfirmation); setMessage(`Backup restored. Safety backup: ${result.backup}`); onRestored(); } else { await api.deleteBackup(pending.item.filename, actionConfirmation); setMessage("Backup deleted."); } setPending(null); setActionConfirmation(""); await load(); } catch (error) { setMessage(error instanceof Error ? error.message : "Backup action failed."); } })()}>{pending.type === "restore" ? "Restore database" : "Delete backup"}</button><button type="button" className="secondary" onClick={() => setPending(null)}>Cancel</button></section>}
+        }}>
+          <p>Only marked Plant Care backups are accepted. The current database is saved first.</p>
+          <input required type="file" accept=".sqlite,.sqlite3,application/x-sqlite3" onChange={(event) => setFile(event.target.files?.[0] || null)} />
+          <label>Type <strong>RESTORE</strong> to continue<input value={confirmation} onChange={event => setConfirmation(event.target.value)} /></label>
+          <button className="secondary" disabled={!file || confirmation !== "RESTORE"}>
+            <Upload size={16} /> Restore backup
+          </button>
+        </form>
+      </SettingsDisclosure>
+      <SettingsDisclosure title="Import legacy database">
+        <p>For compatible older Plant Care databases that do not have a backup marker.</p>
+        <form onSubmit={async event => {
+          event.preventDefault();
+          if (!legacyFile || legacyConfirmation !== "IMPORT") return;
+          try {
+            const result = await api.importLegacy(legacyFile, legacyConfirmation);
+            setMessage(`Database imported. Safety backup: ${result.backup}`);
+            setLegacyFile(null); setLegacyConfirmation("");
+            onRestored();
+            await load();
+          } catch (error) {
+            setMessage(error instanceof Error ? error.message : "Import failed.");
+          }
+        }}>
+          <input type="file" accept=".sqlite,.sqlite3,application/x-sqlite3" onChange={event => setLegacyFile(event.target.files?.[0] || null)} />
+          <label>Type <strong>IMPORT</strong> to continue<input value={legacyConfirmation} onChange={event => setLegacyConfirmation(event.target.value)} /></label>
+          <button className="danger" disabled={!legacyFile || legacyConfirmation !== "IMPORT"}>Replace database</button>
+        </form>
+      </SettingsDisclosure>
+      {schedule && <SettingsDisclosure title="Backup schedule">
+        <form onSubmit={event => { event.preventDefault(); void api.saveBackupSettings(schedule).then(value => { setSchedule(value); setMessage("Backup schedule saved."); }).catch(error => setMessage(error.message)); }}>
+          <label><input type="checkbox" checked={schedule.dailyEnabled} onChange={event => setSchedule({ ...schedule, dailyEnabled: event.target.checked })} /> Daily backups</label>
+          <label>Time<input type="time" value={schedule.dailyTime} onChange={event => setSchedule({ ...schedule, dailyTime: event.target.value })} /></label>
+          <label>Keep<input type="number" min="1" max="365" value={schedule.dailyRetention} onChange={event => setSchedule({ ...schedule, dailyRetention: Number(event.target.value) })} /></label>
+          <label><input type="checkbox" checked={schedule.weeklyEnabled} onChange={event => setSchedule({ ...schedule, weeklyEnabled: event.target.checked })} /> Weekly backups</label>
+          <label>Day<select value={schedule.weeklyDay} onChange={event => setSchedule({ ...schedule, weeklyDay: Number(event.target.value) })}>{["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((day, index) => <option value={index} key={day}>{day}</option>)}</select></label>
+          <label>Time<input type="time" value={schedule.weeklyTime} onChange={event => setSchedule({ ...schedule, weeklyTime: event.target.value })} /></label>
+          <label>Keep<input type="number" min="1" max="365" value={schedule.weeklyRetention} onChange={event => setSchedule({ ...schedule, weeklyRetention: Number(event.target.value) })} /></label>
+          <label>Safety backups to keep<input type="number" min="1" max="365" value={schedule.safetyRetention} onChange={event => setSchedule({ ...schedule, safetyRetention: Number(event.target.value) })} /></label>
+          <button className="secondary">Save schedule</button>
+        </form>
+      </SettingsDisclosure>}
+      {pending && <SettingsDisclosure key={`${pending.type}-${pending.item.filename}`} title={pending.type === "restore" ? "Restore backup" : "Delete backup"} initiallyOpen>
+        <p>{pending.type === "restore" ? "The current database will be replaced after validation and a safety backup." : "This permanently removes the selected backup file."}</p>
+        <strong>{pending.item.filename}</strong>
+        <label>Type <strong>{pending.type === "restore" ? "RESTORE" : "DELETE"}</strong> to continue<input autoFocus value={actionConfirmation} onChange={event => setActionConfirmation(event.target.value)} /></label>
+        <button className="danger" disabled={actionConfirmation !== (pending.type === "restore" ? "RESTORE" : "DELETE")} onClick={() => void (async () => { try { if (pending.type === "restore") { const result = await api.restoreSavedBackup(pending.item.filename, actionConfirmation); setMessage(`Backup restored. Safety backup: ${result.backup}`); onRestored(); } else { await api.deleteBackup(pending.item.filename, actionConfirmation); setMessage("Backup deleted."); } setPending(null); setActionConfirmation(""); await load(); } catch (error) { setMessage(error instanceof Error ? error.message : "Backup action failed."); } })()}>{pending.type === "restore" ? "Restore database" : "Delete backup"}</button>
+        <button type="button" className="secondary" onClick={() => setPending(null)}>Cancel</button>
+      </SettingsDisclosure>}
       {message && <p className="muted">{message}</p>}
       <InstallAppPanel state={pwaInstall} />
     </section>
