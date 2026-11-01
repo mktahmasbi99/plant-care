@@ -22,6 +22,10 @@ export type Plant = {
     snoozed_until: string | null;
   };
   cover_photo_id: number | null;
+  profile_photo_id: number | null;
+  day_note_id: number | null;
+  day_photo_count: number;
+  day_watered_check_id: number | null;
   sort_position: number;
 };
 export type Dashboard = {
@@ -122,6 +126,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  journalForDay: (plant: number, day: string) =>
+    request<{ id: number; body: string; care_date: string } | null>(
+      `/api/plants/${plant}/journal/${day}`,
+    ),
+  deleteJournal: (entry: number) =>
+    request(`/api/journal/${entry}`, { method: "DELETE" }),
   fertilizers: () => request<Fertilizer[]>("/api/fertilizers"),
   createFertilizer: (data: unknown) =>
     request<Fertilizer>("/api/fertilizers", {
@@ -133,16 +143,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  async uploadPhoto(
-    plant: number,
-    file: File,
-    caption = "",
-    journalId?: number,
-  ) {
+  async uploadPhoto(plant: number, file: File, careDate: string) {
     const form = new FormData();
     form.append("file", file);
-    form.append("caption", caption);
-    if (journalId) form.append("journal_entry_id", String(journalId));
+    form.append("care_date", careDate);
     const response = await fetch(`/api/plants/${plant}/photos`, {
       method: "POST",
       body: form,
@@ -154,8 +158,20 @@ export const api = {
       );
     return response.json() as Promise<{ id: number }>;
   },
-  setCover: (photo: number) =>
-    request(`/api/photos/${photo}/cover`, { method: "POST" }),
+  async uploadProfilePhoto(plant: number, file: File) {
+    const form = new FormData();
+    form.append("file", file);
+    const response = await fetch(`/api/plants/${plant}/profile-photo`, {
+      method: "PUT",
+      body: form,
+    });
+    if (!response.ok)
+      throw new Error(
+        (await response.json().catch(() => ({ detail: "Upload failed." })))
+          .detail,
+      );
+    return response.json() as Promise<{ id: number }>;
+  },
   backups: () => request<BackupFile[]>("/api/backups"),
   backupSettings: () => request<BackupSettings>("/api/backups/settings"),
   saveBackupSettings: (data: BackupSettings) => request<BackupSettings>("/api/backups/settings", {

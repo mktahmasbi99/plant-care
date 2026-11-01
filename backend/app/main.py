@@ -149,7 +149,7 @@ class SnoozeInput(BaseModel):
 
 class JournalInput(BaseModel):
     care_date: str
-    body: str = Field(min_length=1, max_length=10000)
+    body: str = Field(min_length=1, max_length=20000)
 
 
 class ProductInput(BaseModel):
@@ -250,6 +250,23 @@ def plant_payload(db: sqlite3.Connection, plant: sqlite3.Row, current: date | No
     cover = db.execute(
         "SELECT id FROM photos WHERE plant_id=? AND is_cover=1", (plant["id"],)
     ).fetchone()
+    profile_photo = db.execute(
+        "SELECT id FROM plant_profile_photos WHERE plant_id=?", (plant["id"],)
+    ).fetchone()
+    day = current.isoformat()
+    day_note = db.execute(
+        "SELECT id FROM journal_entries WHERE plant_id=? AND care_date=?",
+        (plant["id"], day),
+    ).fetchone()
+    day_photo_count = db.execute(
+        "SELECT COUNT(*) FROM photos WHERE plant_id=? AND care_date=?",
+        (plant["id"], day),
+    ).fetchone()[0]
+    day_watered_check = db.execute(
+        """SELECT id FROM plant_checks WHERE plant_id=? AND care_date=?
+           AND outcome='watered' AND round_id IS NULL ORDER BY id DESC LIMIT 1""",
+        (plant["id"], day),
+    ).fetchone()
     return {
         "id": plant["id"],
         "species": plant["species"],
@@ -268,6 +285,10 @@ def plant_payload(db: sqlite3.Connection, plant: sqlite3.Row, current: date | No
         ),
         "watering_signal": watering_signal(db, plant, current),
         "cover_photo_id": cover["id"] if cover else None,
+        "profile_photo_id": profile_photo["id"] if profile_photo else None,
+        "day_note_id": day_note["id"] if day_note else None,
+        "day_photo_count": day_photo_count,
+        "day_watered_check_id": day_watered_check["id"] if day_watered_check else None,
     }
 
 
@@ -491,6 +512,14 @@ def record_ad_hoc_check(plant_id: int, payload: CheckInput):
             db.execute("SELECT id FROM plants WHERE id=?", (plant_id,)).fetchone(),
             "Plant not found.",
         )
+        if payload.outcome == "watered":
+            existing = db.execute(
+                """SELECT * FROM plant_checks WHERE plant_id=? AND care_date=?
+                   AND outcome='watered' AND round_id IS NULL ORDER BY id DESC LIMIT 1""",
+                (plant_id, care_day.isoformat()),
+            ).fetchone()
+            if existing:
+                return dict(existing)
         cursor = db.execute(
             "INSERT INTO plant_checks(plant_id,care_date,outcome,next_check_date,created_at,updated_at) VALUES (?,?,?,?,?,?)",
             (
@@ -657,38 +686,65 @@ def list_journal(plant_id: int):
         ]
 
 
+@app.get("/api/plants/{plant_id}/journal/{care_date}")
+def get_journal_for_day(plant_id: int, care_date: str):
+    day = parse_date(care_date).isoformat()
+    with connect() as db:
+        require_row(
+            db.execute("SELECT id FROM plants WHERE id=?", (plant_id,)).fetchone(),
+            "Plant not found.",
+        )
+        row = db.execute(
+            "SELECT * FROM journal_entries WHERE plant_id=? AND care_date=?",
+            (plant_id, day),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 @app.post("/api/plants/{plant_id}/journal", status_code=201)
 def create_journal(plant_id: int, payload: JournalInput):
     care_day = parse_date(payload.care_date)
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(422, "A note cannot be empty.")
     with transaction() as db:
         require_row(
             db.execute("SELECT id FROM plants WHERE id=?", (plant_id,)).fetchone(),
             "Plant not found.",
         )
-        cursor = db.execute(
-            "INSERT INTO journal_entries(plant_id,care_date,body,created_at,updated_at) VALUES (?,?,?,?,?)",
-            (plant_id, care_day.isoformat(), payload.body.strip(), now(), now()),
+        db.execute(
+            """INSERT INTO journal_entries(plant_id,care_date,body,created_at,updated_at)
+               VALUES (?,?,?,?,?) ON CONFLICT(plant_id,care_date)
+               DO UPDATE SET body=excluded.body,updated_at=excluded.updated_at""",
+            (plant_id, care_day.isoformat(), body, now(), now()),
         )
-        return dict(
-            require_row(
-                db.execute(
-                    "SELECT * FROM journal_entries WHERE id=?", (cursor.lastrowid,)
-                ).fetchone()
-            )
-        )
+        row = db.execute(
+            "SELECT * FROM journal_entries WHERE plant_id=? AND care_date=?",
+            (plant_id, care_day.isoformat()),
+        ).fetchone()
+        return dict(require_row(row))
 
 
 @app.put("/api/journal/{entry_id}")
 def update_journal(entry_id: int, payload: JournalInput):
     care_day = parse_date(payload.care_date)
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(422, "A note cannot be empty.")
     with transaction() as db:
-        require_row(
-            db.execute("SELECT id FROM journal_entries WHERE id=?", (entry_id,)).fetchone(),
+        entry = require_row(
+            db.execute("SELECT * FROM journal_entries WHERE id=?", (entry_id,)).fetchone(),
             "Journal entry not found.",
         )
+        duplicate = db.execute(
+            "SELECT id FROM journal_entries WHERE plant_id=? AND care_date=? AND id<>?",
+            (entry["plant_id"], care_day.isoformat(), entry_id),
+        ).fetchone()
+        if duplicate:
+            raise HTTPException(409, "A note already exists for that day.")
         db.execute(
             "UPDATE journal_entries SET care_date=?,body=?,updated_at=? WHERE id=?",
-            (care_day.isoformat(), payload.body.strip(), now(), entry_id),
+            (care_day.isoformat(), body, now(), entry_id),
         )
         return dict(
             require_row(
@@ -735,9 +791,11 @@ async def upload_photo(
     file: UploadFile = File(...),
     caption: str = Form(default=""),
     journal_entry_id: int | None = Form(default=None),
+    care_date: str | None = Form(default=None),
 ):
     raw = await file.read(MAX_UPLOAD_BYTES + 1)
     full, thumbnail, width, height = process_image(raw)
+    care_day = parse_date(care_date) if care_date else today()
     with transaction() as db:
         require_row(
             db.execute("SELECT id FROM plants WHERE id=?", (plant_id,)).fetchone(),
@@ -753,11 +811,59 @@ async def upload_photo(
             if entry["plant_id"] != plant_id:
                 raise HTTPException(422, "Journal entry belongs to a different plant.")
         cursor = db.execute(
-            """INSERT INTO photos(plant_id,journal_entry_id,caption,image,thumbnail,width,height,created_at)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (plant_id, journal_entry_id, caption[:500], full, thumbnail, width, height, now()),
+            """INSERT INTO photos(plant_id,journal_entry_id,caption,image,thumbnail,width,height,created_at,care_date)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                plant_id,
+                journal_entry_id,
+                caption[:500],
+                full,
+                thumbnail,
+                width,
+                height,
+                now(),
+                care_day.isoformat(),
+            ),
         )
         return {"id": cursor.lastrowid, "width": width, "height": height}
+
+
+@app.put("/api/plants/{plant_id}/profile-photo")
+async def upload_profile_photo(plant_id: int, file: UploadFile = File(...)):
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    full, thumbnail, width, height = process_image(raw)
+    with transaction() as db:
+        require_row(
+            db.execute("SELECT id FROM plants WHERE id=?", (plant_id,)).fetchone(),
+            "Plant not found.",
+        )
+        db.execute(
+            """INSERT INTO plant_profile_photos(plant_id,image,thumbnail,width,height,created_at)
+               VALUES (?,?,?,?,?,?) ON CONFLICT(plant_id) DO UPDATE SET
+               image=excluded.image,thumbnail=excluded.thumbnail,width=excluded.width,
+               height=excluded.height,created_at=excluded.created_at""",
+            (plant_id, full, thumbnail, width, height, now()),
+        )
+        row = db.execute(
+            "SELECT id FROM plant_profile_photos WHERE plant_id=?", (plant_id,)
+        ).fetchone()
+        return {"id": row["id"], "width": width, "height": height}
+
+
+@app.get("/api/plants/{plant_id}/profile-photo")
+def get_profile_photo(plant_id: int, thumbnail: bool = False):
+    with connect() as db:
+        row = require_row(
+            db.execute(
+                "SELECT * FROM plant_profile_photos WHERE plant_id=?", (plant_id,)
+            ).fetchone(),
+            "Profile photo not found.",
+        )
+        return Response(
+            content=row["thumbnail"] if thumbnail else row["image"],
+            media_type=row["mime_type"],
+            headers={"Cache-Control": "private, max-age=86400"},
+        )
 
 
 @app.get("/api/photos/{photo_id}")
@@ -970,7 +1076,7 @@ def timeline(db: sqlite3.Connection, plant_id: int) -> list[dict]:
     events.extend(
         event_payload(db, row, "photo")
         for row in db.execute(
-            "SELECT id,plant_id,journal_entry_id,caption,created_at,is_cover FROM photos WHERE plant_id=?",
+            "SELECT id,plant_id,journal_entry_id,care_date,caption,created_at,is_cover FROM photos WHERE plant_id=?",
             (plant_id,),
         )
     )

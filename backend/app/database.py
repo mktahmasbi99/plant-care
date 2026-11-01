@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 DB_ENV = "PLANT_CARE_DB"
 DEFAULT_DB = "./data/plant_care.sqlite3"
 APP_ID = "plant-care"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 BACKUP_APP_ID = APP_ID
 BACKUP_FORMAT_VERSION = 1
 BACKUP_PREFIXES = {
@@ -141,6 +141,68 @@ def _migrate_v3(db: sqlite3.Connection) -> None:
             )
 
 
+def _migrate_v5(db: sqlite3.Connection) -> None:
+    if "care_date" not in _columns(db, "photos"):
+        db.execute("ALTER TABLE photos ADD COLUMN care_date TEXT")
+    db.execute(
+        """UPDATE photos SET care_date=COALESCE(
+               (SELECT care_date FROM journal_entries WHERE id=photos.journal_entry_id),
+               substr(created_at,1,10)
+           ) WHERE care_date IS NULL OR care_date=''"""
+    )
+    duplicates = db.execute(
+        """SELECT plant_id,care_date FROM journal_entries
+           GROUP BY plant_id,care_date HAVING COUNT(*) > 1"""
+    ).fetchall()
+    for duplicate in duplicates:
+        entries = db.execute(
+            """SELECT id,body,created_at,updated_at FROM journal_entries
+               WHERE plant_id=? AND care_date=? ORDER BY created_at,id""",
+            (duplicate["plant_id"], duplicate["care_date"]),
+        ).fetchall()
+        keeper = entries[0]
+        db.execute(
+            "UPDATE journal_entries SET body=?,updated_at=? WHERE id=?",
+            (
+                "\n\n".join(entry["body"] for entry in entries),
+                max(entry["updated_at"] for entry in entries),
+                keeper["id"],
+            ),
+        )
+        for entry in entries[1:]:
+            db.execute(
+                "UPDATE photos SET journal_entry_id=? WHERE journal_entry_id=?",
+                (keeper["id"], entry["id"]),
+            )
+            db.execute("DELETE FROM journal_entries WHERE id=?", (entry["id"],))
+
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS plant_profile_photos (
+            id INTEGER PRIMARY KEY,
+            plant_id INTEGER NOT NULL UNIQUE REFERENCES plants(id) ON DELETE CASCADE,
+            image BLOB NOT NULL,
+            thumbnail BLOB NOT NULL,
+            mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
+            width INTEGER NOT NULL,
+            height INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        )"""
+    )
+    db.execute(
+        """INSERT OR IGNORE INTO plant_profile_photos
+           (plant_id,image,thumbnail,mime_type,width,height,created_at)
+           SELECT plant_id,image,thumbnail,mime_type,width,height,created_at
+           FROM photos WHERE is_cover=1"""
+    )
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS one_journal_entry_per_plant_day "
+        "ON journal_entries(plant_id,care_date)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS photos_by_plant_date ON photos(plant_id,care_date DESC,id DESC)"
+    )
+
+
 def initialize(path: Path | None = None) -> None:
     with connect(path) as db:
         db.executescript(
@@ -229,10 +291,21 @@ def initialize(path: Path | None = None) -> None:
                 width INTEGER NOT NULL,
                 height INTEGER NOT NULL,
                 is_cover INTEGER NOT NULL DEFAULT 0 CHECK(is_cover IN (0,1)),
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                care_date TEXT NOT NULL
             );
             CREATE UNIQUE INDEX IF NOT EXISTS one_cover_per_plant
               ON photos(plant_id) WHERE is_cover = 1;
+            CREATE TABLE IF NOT EXISTS plant_profile_photos (
+                id INTEGER PRIMARY KEY,
+                plant_id INTEGER NOT NULL UNIQUE REFERENCES plants(id) ON DELETE CASCADE,
+                image BLOB NOT NULL,
+                thumbnail BLOB NOT NULL,
+                mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
+                width INTEGER NOT NULL,
+                height INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS fertilizer_products (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL CHECK(trim(name) <> ''),
@@ -280,6 +353,8 @@ def initialize(path: Path | None = None) -> None:
             _migrate_v2(db)
         if version < 3:
             _migrate_v3(db)
+        if version < 5:
+            _migrate_v5(db)
         db.execute("INSERT OR IGNORE INTO backup_settings(id) VALUES (1)")
         db.execute(
             "INSERT OR REPLACE INTO app_metadata(key, value) VALUES (?, ?)",
