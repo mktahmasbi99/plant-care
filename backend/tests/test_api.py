@@ -31,9 +31,7 @@ def make_plant(client, **overrides):
     return response.json()
 
 
-def test_started_on_is_a_watering_baseline_without_creating_a_watering_event(
-    tmp_path, monkeypatch
-):
+def test_started_on_is_a_watering_baseline_without_creating_a_watering_event(tmp_path, monkeypatch):
     client = client_for(tmp_path, monkeypatch)
     plant = make_plant(client, started_on="2026-01-01")
     assert plant["started_on"] == "2026-01-01"
@@ -41,11 +39,18 @@ def test_started_on_is_a_watering_baseline_without_creating_a_watering_event(
     assert initial["last_watered"] is None
     assert initial["watering_signal"]["days_since"] == 7
     assert initial["watering_signal"]["estimated_interval_days"] is None
-    assert not [event for event in client.get(f"/api/plants/{plant['id']}").json()["timeline"] if event["type"] == "watering"]
+    assert not [
+        event
+        for event in client.get(f"/api/plants/{plant['id']}").json()["timeline"]
+        if event["type"] == "watering"
+    ]
 
-    assert client.post(
-        f"/api/plants/{plant['id']}/waterings", json={"care_date": "2026-01-08"}
-    ).status_code == 201
+    assert (
+        client.post(
+            f"/api/plants/{plant['id']}/waterings", json={"care_date": "2026-01-08"}
+        ).status_code
+        == 201
+    )
     signal = client.get("/api/dashboard?day=2026-01-15").json()["plants"][0]["watering_signal"]
     assert signal["days_since"] == 7
     assert signal["estimated_interval_days"] == 7

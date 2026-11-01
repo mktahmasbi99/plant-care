@@ -209,15 +209,13 @@ def watering_signal(db: sqlite3.Connection, plant: sqlite3.Row, current: date) -
            WHERE plant_id=? AND care_date<=?
              AND (? IS NULL OR care_date>=?) ORDER BY care_date DESC LIMIT 6""",
         (
-            plant["id"], current.isoformat(),
+            plant["id"],
+            current.isoformat(),
             started_on.isoformat() if started_on else None,
             started_on.isoformat() if started_on else None,
         ),
     ).fetchall()
-    dates = [
-        parse_date(row["care_date"])
-        for row in rows
-    ]
+    dates = [parse_date(row["care_date"]) for row in rows]
     if started_on and started_on <= current:
         dates = sorted({*dates, started_on}, reverse=True)[:6]
     last_date = dates[0] if dates else None
@@ -924,8 +922,14 @@ def choose_profile_photo(photo_id: int):
                width=excluded.width,height=excluded.height,created_at=excluded.created_at,
                source_photo_id=excluded.source_photo_id""",
             (
-                photo["plant_id"], photo["image"], photo["thumbnail"], photo["mime_type"],
-                photo["width"], photo["height"], photo["created_at"], photo_id,
+                photo["plant_id"],
+                photo["image"],
+                photo["thumbnail"],
+                photo["mime_type"],
+                photo["width"],
+                photo["height"],
+                photo["created_at"],
+                photo_id,
             ),
         )
         return {"profile_photo_source_id": photo_id}
