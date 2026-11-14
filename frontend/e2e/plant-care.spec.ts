@@ -36,6 +36,28 @@ test('brand returns to Today from every page', async ({ page }) => {
   await expect(today).toBeVisible()
 })
 
+test('searches plants by display, scientific, and short names', async ({ page }) => {
+  const suffix = Date.now()
+  const plants = [
+    { species: `Scientific fern ${suffix}`, nickname: `Short fern ${suffix}` },
+    { species: `Scientific palm ${suffix}`, nickname: `Short palm ${suffix}` },
+  ]
+  for (const plant of plants) {
+    const response = await page.request.post('/api/plants', { data: plant })
+    expect(response.ok()).toBeTruthy()
+  }
+
+  await page.goto('/')
+  const search = page.getByRole('searchbox', { name: 'Search plants' })
+  await search.fill(`Scientific fern ${suffix}`)
+  await expect(page.getByRole('button', { name: `Open Short fern ${suffix}` })).toBeVisible()
+  await expect(page.getByRole('button', { name: `Open Short palm ${suffix}` })).toHaveCount(0)
+
+  await search.fill(`Short palm ${suffix}`)
+  await expect(page.getByRole('button', { name: `Open Short palm ${suffix}` })).toBeVisible()
+  await expect(page.getByRole('button', { name: `Open Short fern ${suffix}` })).toHaveCount(0)
+})
+
 test('settings disclosures start closed and open independently', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: 'Settings' }).click()

@@ -889,6 +889,7 @@ function DeletePlantDialog({
 export function App() {
   const [page, setPage] = useState<Page>("home");
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [plantSearch, setPlantSearch] = useState("");
   const [detail, setDetail] = useState<PlantDetail | null>(null);
   const [fertilizers, setFertilizers] = useState<Fertilizer[]>([]);
   const [error, setError] = useState("");
@@ -1009,6 +1010,19 @@ export function App() {
       setError(e instanceof Error ? e.message : "Could not save card order.");
     }
   };
+  const reorderVisiblePlants = (ids: number[]) => {
+    if (!dashboard || !plantSearch.trim()) {
+      void reorder(ids);
+      return;
+    }
+    const visible = new Set(ids);
+    const reordered = ids.map((id) => dashboard.plants.find((plant) => plant.id === id)!);
+    let nextIndex = 0;
+    const merged = dashboard.plants.map((plant) =>
+      visible.has(plant.id) ? reordered[nextIndex++] : plant,
+    );
+    void reorder(merged.map((plant) => plant.id));
+  };
   const savePlant = async (
     data: Record<string, unknown>,
     photo: File | null,
@@ -1052,6 +1066,11 @@ export function App() {
             ? "Settings"
             : "Add plant";
   const serverDate = dashboardDate || dashboard?.server_date || new Date().toISOString().slice(0, 10);
+  const searchQuery = plantSearch.trim().toLocaleLowerCase();
+  const visiblePlants = dashboard?.plants.filter((plant) =>
+    !searchQuery || [plant.display_name, plant.species, plant.nickname]
+      .some((value) => value.toLocaleLowerCase().includes(searchQuery)),
+  ) || [];
   const dateTitle =
     serverDate === actualToday.current
       ? "Today"
@@ -1133,9 +1152,18 @@ export function App() {
         <section className="page">
           {dashboard ? (
             <>
+              <label className="plant-search">
+                <span>Search plants</span>
+                <input
+                  type="search"
+                  value={plantSearch}
+                  onChange={(event) => setPlantSearch(event.target.value)}
+                  placeholder="Name, scientific name, or short name"
+                />
+              </label>
               {dashboard.plants.length ? (
                 <PlantList
-                  plants={dashboard.plants}
+                  plants={visiblePlants}
                   activeDate={serverDate}
                   onWater={saveWatering}
                   onUndo={undoWatering}
@@ -1143,10 +1171,13 @@ export function App() {
                   onOpen={(id) => void openPlant(id)}
                   onOpenNote={(plant, date) => setNoteTarget({ plant, date })}
                   onAddPhoto={addDayPhoto}
-                  onReorder={(ids) => void reorder(ids)}
+                  onReorder={reorderVisiblePlants}
                 />
               ) : (
                 <Empty onAdd={() => setPage("add")} />
+              )}
+              {dashboard.plants.length > 0 && searchQuery && !visiblePlants.length && (
+                <p className="search-empty">No plants match your search.</p>
               )}
             </>
           ) : (

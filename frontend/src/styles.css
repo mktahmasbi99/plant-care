@@ -280,6 +280,29 @@ h3 {
   display: grid;
   gap: 1rem;
 }
+.plant-search {
+  display: grid;
+  gap: 0.35rem;
+  color: #426048;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.plant-search input {
+  width: 100%;
+  min-height: 2.9rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid #b9d4bd;
+  border-radius: 0.7rem;
+  background: rgb(244 244 237 / 92%);
+  color: inherit;
+}
+.search-empty {
+  margin: 0;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  background: rgb(220 236 223 / 88%);
+  color: #426048;
+}
 .banner {
   background: rgb(255 244 202 / 92%);
   padding: 0.75rem 1rem;
