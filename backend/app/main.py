@@ -727,10 +727,13 @@ def create_journal(plant_id: int, payload: JournalInput, overwrite: bool = True)
             db.execute("SELECT id FROM plants WHERE id=?", (plant_id,)).fetchone(),
             "Plant not found.",
         )
-        if not overwrite and db.execute(
-            "SELECT id FROM journal_entries WHERE plant_id=? AND care_date=?",
-            (plant_id, care_day.isoformat()),
-        ).fetchone():
+        if (
+            not overwrite
+            and db.execute(
+                "SELECT id FROM journal_entries WHERE plant_id=? AND care_date=?",
+                (plant_id, care_day.isoformat()),
+            ).fetchone()
+        ):
             raise HTTPException(
                 409, "A note already exists for that day. Open it to edit, or choose another date."
             )
