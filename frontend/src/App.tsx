@@ -18,6 +18,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   BookOpen,
+  Check,
   Camera,
   Download,
   Droplets,
@@ -37,6 +38,7 @@ import {
 } from "lucide-react";
 import { api, BackupFile, BackupSettings, Dashboard, Fertilizer, Plant, PlantDetail, TimelineEvent } from "./api";
 import { InstallAppPanel, type PwaInstallState } from "./components/InstallAppPanel";
+import { Notebook } from "./components/Notebook";
 import { SettingsDisclosure } from "./components/SettingsDisclosure";
 import { usePwaInstall } from "./hooks/usePwaInstall";
 
@@ -504,33 +506,23 @@ function DayNoteEditor({
   }, [plant.id, date]);
 
   const close = () => {
+    if (saving) return;
     if (body !== initialBody.current && !confirm("Discard your unsaved note changes?")) return;
     onClose();
   };
   const save = async () => {
-    if (!body.trim() || saving) return;
+    if (saving) return;
     setSaving(true);
     setError("");
     try {
-      await api.journal(plant.id, { care_date: date, body });
+      if (body.trim()) {
+        if (entry) await api.updateJournal(entry.id, { care_date: date, body });
+        else await api.journal(plant.id, { care_date: date, body });
+      } else if (entry) await api.deleteJournal(entry.id);
       await onSaved();
       onClose();
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not save this note.");
-    } finally {
-      setSaving(false);
-    }
-  };
-  const remove = async () => {
-    if (!entry || !confirm(`Delete ${formatCareDate(date)}’s note?`)) return;
-    setSaving(true);
-    setError("");
-    try {
-      await api.deleteJournal(entry.id);
-      await onSaved();
-      onClose();
-    } catch (error) {
-      setError(error instanceof Error ? error.message : "Could not delete this note.");
     } finally {
       setSaving(false);
     }
@@ -540,9 +532,9 @@ function DayNoteEditor({
     <div className="note-editor-backdrop" role="presentation" tabIndex={-1} onKeyDown={(event) => { if (event.key === "Escape") close(); }} onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
       <section className="note-editor" role="dialog" aria-modal="true" aria-labelledby="note-editor-title">
         <header className="note-editor-header">
-          <button type="button" className="note-editor-close" onClick={close}>Close</button>
-          <button type="button" className="note-editor-save" disabled={loading || saving || !body.trim() || body === initialBody.current} onClick={() => void save()}>
-            {saving ? "Saving…" : "Save"}
+          <button type="button" className="note-editor-close" aria-label="Discard changes" disabled={saving} onClick={onClose}><X /></button>
+          <button type="button" className="note-editor-save" aria-label="Save" disabled={loading || saving} onClick={() => void save()}>
+            <Check />
           </button>
         </header>
         <div className="note-editor-content">
@@ -560,7 +552,6 @@ function DayNoteEditor({
           {error && <p role="alert" className="note-editor-error">{error}</p>}
           <div className="note-editor-footer">
             <span aria-live="polite">{body.length.toLocaleString()} / 20,000</span>
-            {entry && <button type="button" className="delete-menu-item" disabled={saving} onClick={() => void remove()}>Delete note</button>}
           </div>
         </div>
       </section>
@@ -1312,8 +1303,9 @@ function PlantDetailView({
   onArchive: () => void;
   onDelete: () => Promise<void>;
 }) {
+  const [notebookOpen, setNotebookOpen] = useState(false);
   const [mode, setMode] = useState<
-    "view" | "edit" | "journal" | "photos" | "fertilizer"
+    "view" | "edit" | "photos" | "fertilizer"
   >("view");
   const [date, setDate] = useState(activeDate);
   const [product, setProduct] = useState("");
@@ -1370,7 +1362,8 @@ function PlantDetailView({
       </section>
     );
   return (
-    <section className="page detail">
+    <>
+    <section className="page detail" inert={notebookOpen}>
       <button className="back" onClick={onBack}>
         ‹ Today
       </button>
@@ -1399,8 +1392,7 @@ function PlantDetailView({
           <button
             className="icon-button"
             aria-label="Plant notebook"
-            aria-pressed={mode === "journal"}
-            onClick={() => setMode((current) => current === "journal" ? "view" : "journal")}
+            onClick={() => setNotebookOpen(true)}
           >
             <NotebookPen size={19} />
           </button>
@@ -1481,30 +1473,6 @@ function PlantDetailView({
             <h3>Care instructions</h3>
             <p>{detail.care_note}</p>
           </div>
-        </section>
-      )}
-      {mode === "journal" && (
-        <section className="notebook">
-          <h3 className="section-title">Plant notebook</h3>
-          <section className="timeline notebook-entries">
-            {detail.timeline.filter((event) => event.type === "journal").length ? (
-              detail.timeline
-                .filter((event) => event.type === "journal")
-                .map((event) => (
-                  <article className="timeline-event" key={`notebook-${event.id}`}>
-                    <span className="event-date">
-                      {String(event.care_date || event.created_at).slice(0, 10)}
-                    </span>
-                    <div>
-                      <strong>Note</strong>
-                      {typeof event.body === "string" && <p>{event.body}</p>}
-                    </div>
-                  </article>
-                ))
-            ) : (
-              <p className="muted">No notes yet. Add one from a plant card for a selected date.</p>
-            )}
-          </section>
         </section>
       )}
       {mode === "photos" && (
@@ -1747,6 +1715,8 @@ function PlantDetailView({
         </div>
       )}
     </section>
+    {notebookOpen && <Notebook plant={detail} onClose={() => setNotebookOpen(false)} onSaved={onRefresh} />}
+    </>
   );
 }
 function FertilizerView({

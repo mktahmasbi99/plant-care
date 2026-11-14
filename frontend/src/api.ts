@@ -123,11 +123,13 @@ export const api = {
     }),
   deleteWatering: (watering: number) =>
     request(`/api/waterings/${watering}`, { method: "DELETE" }),
-  journal: (plant: number, data: unknown) =>
-    request(`/api/plants/${plant}/journal`, {
+  journal: (plant: number, data: unknown, overwrite = true) =>
+    request(`/api/plants/${plant}/journal?overwrite=${overwrite}`, {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  updateJournal: (entry: number, data: { care_date: string; body: string }) =>
+    request(`/api/journal/${entry}`, { method: "PUT", body: JSON.stringify(data) }),
   journalForDay: (plant: number, day: string) =>
     request<{ id: number; body: string; care_date: string } | null>(
       `/api/plants/${plant}/journal/${day}`,

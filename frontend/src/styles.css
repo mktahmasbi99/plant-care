@@ -1683,3 +1683,38 @@ nav button.active {
     background: #3a2622;
   }
 }
+
+.notebook-page {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: #f4f4ed;
+  color: #18221a;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.notebook-page .note-editor-header { flex-shrink: 0; gap: 0.5rem; }
+.notebook-page .note-editor-header > div:not(.notebook-editor-actions) { flex: 1; min-width: 0; }
+.notebook-page h2 { font-size: 1rem; margin: 0.15rem 0; }
+.notebook-page .note-editor-header strong { overflow-wrap: anywhere; }
+.notebook-page .note-editor-header button { min-width: 44px; min-height: 44px; color: inherit; }
+.notebook-page .note-editor-header .note-editor-save { color: #26713b; }
+.notebook-editor-actions { display: flex; }
+.notebook-list { overflow-y: auto; padding: 1rem; width: min(100%, 48rem); margin: 0 auto; }
+.notebook-list[hidden] { display: none; }
+.notebook-note { display: block; width: 100%; text-align: left; padding: 1rem; margin-bottom: 1rem; border: 1px solid #c9d5c7; border-radius: 1rem; background: #fff; color: inherit; }
+.notebook-note time { color: #526355; font-size: 0.9rem; }
+.notebook-note p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; margin: 0.5rem 0; }
+.notebook-more { color: #26713b; text-decoration: underline; }
+.notebook-content { overflow-y: auto; }
+.notebook-content textarea { flex-shrink: 0; }
+.notebook-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
+.notebook-page > .note-editor-error { padding: 0.5rem 1rem; }
+@media (prefers-color-scheme: dark) {
+  .notebook-page { background: #152019; color: #edf4ed; }
+  .notebook-note { background: #18241b; border-color: #435647; }
+  .notebook-note time { color: #aebcaf; }
+  .notebook-more,
+  .notebook-page .note-editor-header .note-editor-save { color: #9bd8a4; }
+}
