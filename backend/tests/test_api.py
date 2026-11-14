@@ -613,3 +613,23 @@ def test_photo_is_processed_and_can_become_a_cover(tmp_path, monkeypatch):
     assert (
         client.get(f"/api/photos/{photo_id}?thumbnail=true").headers["content-type"] == "image/jpeg"
     )
+
+
+def test_new_notebook_entry_cannot_overwrite_an_existing_day(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    plant = make_plant(client)
+    path = f"/api/plants/{plant['id']}/journal?overwrite=false"
+    payload = {"care_date": "2026-10-20", "body": "Keep this note"}
+    entry = client.post(path, json=payload)
+    assert entry.status_code == 201
+    assert client.post(path, json={**payload, "body": "Replacement"}).status_code == 409
+    assert (
+        client.get(f"/api/plants/{plant['id']}/journal/2026-10-20").json()["body"]
+        == "Keep this note"
+    )
+    updated = client.put(
+        f"/api/journal/{entry.json()['id']}", json={**payload, "body": "Edited older note"}
+    )
+    assert updated.status_code == 200
+    assert updated.json()["care_date"] == payload["care_date"]
+    assert updated.json()["body"] == "Edited older note"

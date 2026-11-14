@@ -717,7 +717,7 @@ def get_journal_for_day(plant_id: int, care_date: str):
 
 
 @app.post("/api/plants/{plant_id}/journal", status_code=201)
-def create_journal(plant_id: int, payload: JournalInput):
+def create_journal(plant_id: int, payload: JournalInput, overwrite: bool = True):
     care_day = parse_date(payload.care_date)
     body = payload.body.strip()
     if not body:
@@ -727,6 +727,16 @@ def create_journal(plant_id: int, payload: JournalInput):
             db.execute("SELECT id FROM plants WHERE id=?", (plant_id,)).fetchone(),
             "Plant not found.",
         )
+        if (
+            not overwrite
+            and db.execute(
+                "SELECT id FROM journal_entries WHERE plant_id=? AND care_date=?",
+                (plant_id, care_day.isoformat()),
+            ).fetchone()
+        ):
+            raise HTTPException(
+                409, "A note already exists for that day. Open it to edit, or choose another date."
+            )
         db.execute(
             """INSERT INTO journal_entries(plant_id,care_date,body,created_at,updated_at)
                VALUES (?,?,?,?,?) ON CONFLICT(plant_id,care_date)
